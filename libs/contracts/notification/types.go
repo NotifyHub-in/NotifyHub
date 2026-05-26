@@ -19,6 +19,7 @@ const (
 	RequestStatusProcessing  RequestStatus = "processing"
 	RequestStatusDispatched  RequestStatus = "dispatched"
 	RequestStatusFailed      RequestStatus = "failed"
+	RequestStatusSuppressed  RequestStatus = "suppressed"
 	RequestStatusUnsupported RequestStatus = "unsupported"
 )
 
@@ -28,6 +29,7 @@ const (
 	DeliveryAttemptPending     DeliveryAttemptStatus = "pending"
 	DeliveryAttemptAccepted    DeliveryAttemptStatus = "accepted"
 	DeliveryAttemptFailed      DeliveryAttemptStatus = "failed"
+	DeliveryAttemptSuppressed  DeliveryAttemptStatus = "suppressed"
 	DeliveryAttemptUnsupported DeliveryAttemptStatus = "unsupported"
 )
 
@@ -89,6 +91,76 @@ type DeliveryAttempt struct {
 
 type DeliveryPlan struct {
 	Request NotificationRecord `json:"request"`
+}
+
+type ProviderBinding struct {
+	BindingID     string    `json:"binding_id"`
+	Channel       Channel   `json:"channel"`
+	ConnectorName string    `json:"connector_name"`
+	EndpointURL   string    `json:"endpoint_url"`
+	Enabled       bool      `json:"enabled"`
+	Priority      int       `json:"priority"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type ProviderBindingUpsertRequest struct {
+	Channel       Channel `json:"channel"`
+	ConnectorName string  `json:"connector_name"`
+	EndpointURL   string  `json:"endpoint_url"`
+	Enabled       bool    `json:"enabled"`
+	Priority      int     `json:"priority"`
+}
+
+type RoutingPolicy struct {
+	PolicyID  string    `json:"policy_id"`
+	EventName string    `json:"event_name"`
+	Channels  []Channel `json:"channels"`
+	Enabled   bool      `json:"enabled"`
+	Priority  int       `json:"priority"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type RoutingPolicyUpsertRequest struct {
+	EventName string    `json:"event_name"`
+	Channels  []Channel `json:"channels"`
+	Enabled   bool      `json:"enabled"`
+	Priority  int       `json:"priority"`
+}
+
+type PreferencePolicy struct {
+	PolicyID  string    `json:"policy_id"`
+	UserID    string    `json:"user_id"`
+	Channel   Channel   `json:"channel"`
+	IsEnabled bool      `json:"is_enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type PreferencePolicyUpsertRequest struct {
+	UserID    string  `json:"user_id"`
+	Channel   Channel `json:"channel"`
+	IsEnabled bool    `json:"is_enabled"`
+}
+
+type Template struct {
+	TemplateID      string    `json:"template_id"`
+	TemplateKey     string    `json:"template_key"`
+	Channel         Channel   `json:"channel"`
+	SubjectTemplate string    `json:"subject_template,omitempty"`
+	BodyTemplate    string    `json:"body_template"`
+	Enabled         bool      `json:"enabled"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type TemplateUpsertRequest struct {
+	TemplateKey     string  `json:"template_key"`
+	Channel         Channel `json:"channel"`
+	SubjectTemplate string  `json:"subject_template,omitempty"`
+	BodyTemplate    string  `json:"body_template"`
+	Enabled         bool    `json:"enabled"`
 }
 
 type ConnectorSendRequest struct {

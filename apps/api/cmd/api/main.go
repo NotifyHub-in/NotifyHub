@@ -11,6 +11,7 @@ import (
 	"github.com/your-org/notification-control-plane/libs/core/config"
 	"github.com/your-org/notification-control-plane/libs/core/httpx"
 	"github.com/your-org/notification-control-plane/libs/core/id"
+	"github.com/your-org/notification-control-plane/libs/core/render"
 	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
 	kafkamq "github.com/your-org/notification-control-plane/libs/messaging/kafka"
 	"github.com/your-org/notification-control-plane/libs/observability/logging"
@@ -49,8 +50,8 @@ func main() {
 				return
 			}
 
-			if req.EventName == "" || req.TemplateKey == "" || len(req.Channels) == 0 || req.IdempotencyKey == "" {
-				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "event_name, template_key, channels, and idempotency_key are required"})
+			if req.EventName == "" || req.TemplateKey == "" || req.IdempotencyKey == "" {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "event_name, template_key, and idempotency_key are required"})
 				return
 			}
 
@@ -106,6 +107,250 @@ func main() {
 			})
 		})
 
+		mux.HandleFunc("GET /v1/provider-bindings", func(w http.ResponseWriter, r *http.Request) {
+			bindings, err := store.ListProviderBindings(r.Context())
+			if err != nil {
+				logger.Error("list provider bindings failed", "error", err)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider bindings"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"provider_bindings": bindings})
+		})
+
+		mux.HandleFunc("GET /v1/provider-bindings/{channel}", func(w http.ResponseWriter, r *http.Request) {
+			channel := notification.Channel(r.PathValue("channel"))
+			binding, err := store.GetProviderBindingByChannel(r.Context(), channel)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "provider binding not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("get provider binding failed", "error", err, "channel", channel)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider binding"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, binding)
+		})
+
+		mux.HandleFunc("POST /v1/provider-bindings", func(w http.ResponseWriter, r *http.Request) {
+			var req notification.ProviderBindingUpsertRequest
+			if err := httpx.DecodeJSON(r, &req); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid provider binding payload"})
+				return
+			}
+			if req.Channel == "" || req.ConnectorName == "" || req.EndpointURL == "" {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "channel, connector_name, and endpoint_url are required"})
+				return
+			}
+
+			binding := notification.ProviderBinding{
+				BindingID:     id.New(12),
+				Channel:       req.Channel,
+				ConnectorName: req.ConnectorName,
+				EndpointURL:   req.EndpointURL,
+				Enabled:       req.Enabled,
+				Priority:      req.Priority,
+			}
+			if err := store.UpsertProviderBinding(r.Context(), binding); err != nil {
+				logger.Error("upsert provider binding failed", "error", err, "channel", req.Channel)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save provider binding"})
+				return
+			}
+
+			saved, err := store.GetProviderBindingByChannel(r.Context(), req.Channel)
+			if err != nil {
+				logger.Error("reload provider binding failed", "error", err, "channel", req.Channel)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload provider binding"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, saved)
+		})
+
+		mux.HandleFunc("GET /v1/routing-policies", func(w http.ResponseWriter, r *http.Request) {
+			policies, err := store.ListRoutingPolicies(r.Context())
+			if err != nil {
+				logger.Error("list routing policies failed", "error", err)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load routing policies"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"routing_policies": policies})
+		})
+
+		mux.HandleFunc("GET /v1/routing-policies/{eventName}", func(w http.ResponseWriter, r *http.Request) {
+			eventName := r.PathValue("eventName")
+			policy, err := store.GetRoutingPolicyByEventName(r.Context(), eventName)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "routing policy not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("get routing policy failed", "error", err, "event_name", eventName)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load routing policy"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, policy)
+		})
+
+		mux.HandleFunc("POST /v1/routing-policies", func(w http.ResponseWriter, r *http.Request) {
+			var req notification.RoutingPolicyUpsertRequest
+			if err := httpx.DecodeJSON(r, &req); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid routing policy payload"})
+				return
+			}
+			if req.EventName == "" || len(req.Channels) == 0 {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "event_name and channels are required"})
+				return
+			}
+
+			policy := notification.RoutingPolicy{
+				PolicyID:  id.New(12),
+				EventName: req.EventName,
+				Channels:  req.Channels,
+				Enabled:   req.Enabled,
+				Priority:  req.Priority,
+			}
+			if err := store.UpsertRoutingPolicy(r.Context(), policy); err != nil {
+				logger.Error("upsert routing policy failed", "error", err, "event_name", req.EventName)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save routing policy"})
+				return
+			}
+
+			saved, err := store.GetRoutingPolicyByEventName(r.Context(), req.EventName)
+			if err != nil {
+				logger.Error("reload routing policy failed", "error", err, "event_name", req.EventName)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload routing policy"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, saved)
+		})
+
+		mux.HandleFunc("GET /v1/preference-policies", func(w http.ResponseWriter, r *http.Request) {
+			userID := r.URL.Query().Get("user_id")
+			policies, err := store.ListPreferencePolicies(r.Context(), userID)
+			if err != nil {
+				logger.Error("list preference policies failed", "error", err, "user_id", userID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load preference policies"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"preference_policies": policies})
+		})
+
+		mux.HandleFunc("GET /v1/preference-policies/{userID}/{channel}", func(w http.ResponseWriter, r *http.Request) {
+			userID := r.PathValue("userID")
+			channel := notification.Channel(r.PathValue("channel"))
+			policy, err := store.GetPreferencePolicy(r.Context(), userID, channel)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "preference policy not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("get preference policy failed", "error", err, "user_id", userID, "channel", channel)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load preference policy"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, policy)
+		})
+
+		mux.HandleFunc("POST /v1/preference-policies", func(w http.ResponseWriter, r *http.Request) {
+			var req notification.PreferencePolicyUpsertRequest
+			if err := httpx.DecodeJSON(r, &req); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid preference policy payload"})
+				return
+			}
+			if req.UserID == "" || req.Channel == "" {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id and channel are required"})
+				return
+			}
+
+			policy := notification.PreferencePolicy{
+				PolicyID:  id.New(12),
+				UserID:    req.UserID,
+				Channel:   req.Channel,
+				IsEnabled: req.IsEnabled,
+			}
+			if err := store.UpsertPreferencePolicy(r.Context(), policy); err != nil {
+				logger.Error("upsert preference policy failed", "error", err, "user_id", req.UserID, "channel", req.Channel)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save preference policy"})
+				return
+			}
+
+			saved, err := store.GetPreferencePolicy(r.Context(), req.UserID, req.Channel)
+			if err != nil {
+				logger.Error("reload preference policy failed", "error", err, "user_id", req.UserID, "channel", req.Channel)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload preference policy"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, saved)
+		})
+
+		mux.HandleFunc("GET /v1/templates", func(w http.ResponseWriter, r *http.Request) {
+			templates, err := store.ListTemplates(r.Context())
+			if err != nil {
+				logger.Error("list templates failed", "error", err)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load templates"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"templates": templates})
+		})
+
+		mux.HandleFunc("GET /v1/templates/{templateKey}/{channel}", func(w http.ResponseWriter, r *http.Request) {
+			templateKey := r.PathValue("templateKey")
+			channel := notification.Channel(r.PathValue("channel"))
+			tmpl, err := store.GetTemplateByKeyAndChannel(r.Context(), templateKey, channel)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("get template failed", "error", err, "template_key", templateKey, "channel", channel)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load template"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, tmpl)
+		})
+
+		mux.HandleFunc("POST /v1/templates", func(w http.ResponseWriter, r *http.Request) {
+			var req notification.TemplateUpsertRequest
+			if err := httpx.DecodeJSON(r, &req); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid template payload"})
+				return
+			}
+			if req.TemplateKey == "" || req.Channel == "" || req.BodyTemplate == "" {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "template_key, channel, and body_template are required"})
+				return
+			}
+			if err := render.ValidateSubjectTemplate(req.SubjectTemplate); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			if err := render.ValidateBodyTemplate(req.BodyTemplate); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+
+			tmpl := notification.Template{
+				TemplateID:      id.New(12),
+				TemplateKey:     req.TemplateKey,
+				Channel:         req.Channel,
+				SubjectTemplate: req.SubjectTemplate,
+				BodyTemplate:    req.BodyTemplate,
+				Enabled:         req.Enabled,
+			}
+			if err := store.UpsertTemplate(r.Context(), tmpl); err != nil {
+				logger.Error("upsert template failed", "error", err, "template_key", req.TemplateKey, "channel", req.Channel)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save template"})
+				return
+			}
+
+			saved, err := store.GetTemplateByKeyAndChannel(r.Context(), req.TemplateKey, req.Channel)
+			if err != nil {
+				logger.Error("reload template failed", "error", err, "template_key", req.TemplateKey, "channel", req.Channel)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload template"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, saved)
+		})
+
 		mux.HandleFunc("GET /v1/notification-requests/{requestID}", func(w http.ResponseWriter, r *http.Request) {
 			requestID := r.PathValue("requestID")
 			record, err := store.GetNotificationRequest(r.Context(), requestID)
@@ -135,8 +380,8 @@ func main() {
 		mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"service": info.Name,
-				"phase":   "happy-path",
-				"state":   "api persists and enqueues notification requests",
+				"phase":   "templates",
+				"state":   "api persists requests, provider bindings, routing policies, preference policies, and templates",
 				"topic":   topic,
 			})
 		})

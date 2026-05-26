@@ -249,3 +249,381 @@ func (s *Store) ListDeliveryAttempts(ctx context.Context, requestID string) ([]n
 
 	return attempts, nil
 }
+
+func (s *Store) UpsertProviderBinding(ctx context.Context, binding notification.ProviderBinding) error {
+	const query = `
+		INSERT INTO provider_bindings (
+			binding_id, channel, connector_name, endpoint_url, enabled, priority
+		) VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (channel)
+		DO UPDATE SET
+			connector_name = EXCLUDED.connector_name,
+			endpoint_url = EXCLUDED.endpoint_url,
+			enabled = EXCLUDED.enabled,
+			priority = EXCLUDED.priority,
+			updated_at = NOW()
+	`
+
+	_, err := s.db.ExecContext(ctx, query,
+		binding.BindingID,
+		binding.Channel,
+		binding.ConnectorName,
+		binding.EndpointURL,
+		binding.Enabled,
+		binding.Priority,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert provider binding: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListProviderBindings(ctx context.Context) ([]notification.ProviderBinding, error) {
+	const query = `
+		SELECT binding_id, channel, connector_name, endpoint_url, enabled, priority, created_at, updated_at
+		FROM provider_bindings
+		ORDER BY priority ASC, channel ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query provider bindings: %w", err)
+	}
+	defer rows.Close()
+
+	var bindings []notification.ProviderBinding
+	for rows.Next() {
+		var binding notification.ProviderBinding
+		if err := rows.Scan(
+			&binding.BindingID,
+			&binding.Channel,
+			&binding.ConnectorName,
+			&binding.EndpointURL,
+			&binding.Enabled,
+			&binding.Priority,
+			&binding.CreatedAt,
+			&binding.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan provider binding: %w", err)
+		}
+		bindings = append(bindings, binding)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate provider bindings: %w", err)
+	}
+	return bindings, nil
+}
+
+func (s *Store) GetProviderBindingByChannel(ctx context.Context, channel notification.Channel) (notification.ProviderBinding, error) {
+	const query = `
+		SELECT binding_id, channel, connector_name, endpoint_url, enabled, priority, created_at, updated_at
+		FROM provider_bindings
+		WHERE channel = $1 AND enabled = TRUE
+		ORDER BY priority ASC
+		LIMIT 1
+	`
+
+	var binding notification.ProviderBinding
+	err := s.db.QueryRowContext(ctx, query, channel).Scan(
+		&binding.BindingID,
+		&binding.Channel,
+		&binding.ConnectorName,
+		&binding.EndpointURL,
+		&binding.Enabled,
+		&binding.Priority,
+		&binding.CreatedAt,
+		&binding.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return notification.ProviderBinding{}, ErrNotFound
+	}
+	if err != nil {
+		return notification.ProviderBinding{}, fmt.Errorf("query provider binding: %w", err)
+	}
+	return binding, nil
+}
+
+func (s *Store) UpsertRoutingPolicy(ctx context.Context, policy notification.RoutingPolicy) error {
+	channelsJSON, err := json.Marshal(policy.Channels)
+	if err != nil {
+		return fmt.Errorf("marshal routing policy channels: %w", err)
+	}
+
+	const query = `
+		INSERT INTO routing_policies (
+			policy_id, event_name, channels, enabled, priority
+		) VALUES ($1, $2, $3::jsonb, $4, $5)
+		ON CONFLICT (event_name)
+		DO UPDATE SET
+			channels = EXCLUDED.channels,
+			enabled = EXCLUDED.enabled,
+			priority = EXCLUDED.priority,
+			updated_at = NOW()
+	`
+
+	_, err = s.db.ExecContext(ctx, query,
+		policy.PolicyID,
+		policy.EventName,
+		string(channelsJSON),
+		policy.Enabled,
+		policy.Priority,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert routing policy: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListRoutingPolicies(ctx context.Context) ([]notification.RoutingPolicy, error) {
+	const query = `
+		SELECT policy_id, event_name, channels, enabled, priority, created_at, updated_at
+		FROM routing_policies
+		ORDER BY priority ASC, event_name ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query routing policies: %w", err)
+	}
+	defer rows.Close()
+
+	var policies []notification.RoutingPolicy
+	for rows.Next() {
+		var (
+			policy       notification.RoutingPolicy
+			channelsJSON []byte
+		)
+		if err := rows.Scan(
+			&policy.PolicyID,
+			&policy.EventName,
+			&channelsJSON,
+			&policy.Enabled,
+			&policy.Priority,
+			&policy.CreatedAt,
+			&policy.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan routing policy: %w", err)
+		}
+		if err := json.Unmarshal(channelsJSON, &policy.Channels); err != nil {
+			return nil, fmt.Errorf("unmarshal routing policy channels: %w", err)
+		}
+		policies = append(policies, policy)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate routing policies: %w", err)
+	}
+	return policies, nil
+}
+
+func (s *Store) GetRoutingPolicyByEventName(ctx context.Context, eventName string) (notification.RoutingPolicy, error) {
+	const query = `
+		SELECT policy_id, event_name, channels, enabled, priority, created_at, updated_at
+		FROM routing_policies
+		WHERE event_name = $1 AND enabled = TRUE
+		ORDER BY priority ASC
+		LIMIT 1
+	`
+
+	var (
+		policy       notification.RoutingPolicy
+		channelsJSON []byte
+	)
+	err := s.db.QueryRowContext(ctx, query, eventName).Scan(
+		&policy.PolicyID,
+		&policy.EventName,
+		&channelsJSON,
+		&policy.Enabled,
+		&policy.Priority,
+		&policy.CreatedAt,
+		&policy.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return notification.RoutingPolicy{}, ErrNotFound
+	}
+	if err != nil {
+		return notification.RoutingPolicy{}, fmt.Errorf("query routing policy: %w", err)
+	}
+	if err := json.Unmarshal(channelsJSON, &policy.Channels); err != nil {
+		return notification.RoutingPolicy{}, fmt.Errorf("unmarshal routing policy channels: %w", err)
+	}
+	return policy, nil
+}
+
+func (s *Store) UpsertPreferencePolicy(ctx context.Context, policy notification.PreferencePolicy) error {
+	const query = `
+		INSERT INTO preference_policies (
+			policy_id, user_id, channel, is_enabled
+		) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (user_id, channel)
+		DO UPDATE SET
+			is_enabled = EXCLUDED.is_enabled,
+			updated_at = NOW()
+	`
+
+	_, err := s.db.ExecContext(ctx, query,
+		policy.PolicyID,
+		policy.UserID,
+		policy.Channel,
+		policy.IsEnabled,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert preference policy: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListPreferencePolicies(ctx context.Context, userID string) ([]notification.PreferencePolicy, error) {
+	query := `
+		SELECT policy_id, user_id, channel, is_enabled, created_at, updated_at
+		FROM preference_policies
+	`
+	args := []any{}
+	if userID != "" {
+		query += ` WHERE user_id = $1`
+		args = append(args, userID)
+	}
+	query += ` ORDER BY user_id ASC, channel ASC`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query preference policies: %w", err)
+	}
+	defer rows.Close()
+
+	var policies []notification.PreferencePolicy
+	for rows.Next() {
+		var policy notification.PreferencePolicy
+		if err := rows.Scan(
+			&policy.PolicyID,
+			&policy.UserID,
+			&policy.Channel,
+			&policy.IsEnabled,
+			&policy.CreatedAt,
+			&policy.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan preference policy: %w", err)
+		}
+		policies = append(policies, policy)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate preference policies: %w", err)
+	}
+	return policies, nil
+}
+
+func (s *Store) GetPreferencePolicy(ctx context.Context, userID string, channel notification.Channel) (notification.PreferencePolicy, error) {
+	const query = `
+		SELECT policy_id, user_id, channel, is_enabled, created_at, updated_at
+		FROM preference_policies
+		WHERE user_id = $1 AND channel = $2
+		LIMIT 1
+	`
+
+	var policy notification.PreferencePolicy
+	err := s.db.QueryRowContext(ctx, query, userID, channel).Scan(
+		&policy.PolicyID,
+		&policy.UserID,
+		&policy.Channel,
+		&policy.IsEnabled,
+		&policy.CreatedAt,
+		&policy.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return notification.PreferencePolicy{}, ErrNotFound
+	}
+	if err != nil {
+		return notification.PreferencePolicy{}, fmt.Errorf("query preference policy: %w", err)
+	}
+	return policy, nil
+}
+
+func (s *Store) UpsertTemplate(ctx context.Context, tmpl notification.Template) error {
+	const query = `
+		INSERT INTO templates (
+			template_id, template_key, channel, subject_template, body_template, enabled
+		) VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (template_key, channel)
+		DO UPDATE SET
+			subject_template = EXCLUDED.subject_template,
+			body_template = EXCLUDED.body_template,
+			enabled = EXCLUDED.enabled,
+			updated_at = NOW()
+	`
+
+	_, err := s.db.ExecContext(ctx, query,
+		tmpl.TemplateID,
+		tmpl.TemplateKey,
+		tmpl.Channel,
+		tmpl.SubjectTemplate,
+		tmpl.BodyTemplate,
+		tmpl.Enabled,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert template: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListTemplates(ctx context.Context) ([]notification.Template, error) {
+	const query = `
+		SELECT template_id, template_key, channel, subject_template, body_template, enabled, created_at, updated_at
+		FROM templates
+		ORDER BY template_key ASC, channel ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query templates: %w", err)
+	}
+	defer rows.Close()
+
+	var templates []notification.Template
+	for rows.Next() {
+		var tmpl notification.Template
+		if err := rows.Scan(
+			&tmpl.TemplateID,
+			&tmpl.TemplateKey,
+			&tmpl.Channel,
+			&tmpl.SubjectTemplate,
+			&tmpl.BodyTemplate,
+			&tmpl.Enabled,
+			&tmpl.CreatedAt,
+			&tmpl.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan template: %w", err)
+		}
+		templates = append(templates, tmpl)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate templates: %w", err)
+	}
+	return templates, nil
+}
+
+func (s *Store) GetTemplateByKeyAndChannel(ctx context.Context, templateKey string, channel notification.Channel) (notification.Template, error) {
+	const query = `
+		SELECT template_id, template_key, channel, subject_template, body_template, enabled, created_at, updated_at
+		FROM templates
+		WHERE template_key = $1 AND channel = $2 AND enabled = TRUE
+		LIMIT 1
+	`
+
+	var tmpl notification.Template
+	err := s.db.QueryRowContext(ctx, query, templateKey, channel).Scan(
+		&tmpl.TemplateID,
+		&tmpl.TemplateKey,
+		&tmpl.Channel,
+		&tmpl.SubjectTemplate,
+		&tmpl.BodyTemplate,
+		&tmpl.Enabled,
+		&tmpl.CreatedAt,
+		&tmpl.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return notification.Template{}, ErrNotFound
+	}
+	if err != nil {
+		return notification.Template{}, fmt.Errorf("query template: %w", err)
+	}
+	return tmpl, nil
+}
