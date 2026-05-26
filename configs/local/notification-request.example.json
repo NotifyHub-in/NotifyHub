@@ -1,0 +1,20 @@
+{
+  "idempotency_key": "order-123-delay-email",
+  "event_name": "order.delayed",
+  "template_key": "order-delayed-v1",
+  "channels": ["email", "sms"],
+  "recipient": {
+    "user_id": "user-123",
+    "email": "customer@example.com",
+    "phone": "+15555550123"
+  },
+  "variables": {
+    "order_id": "123",
+    "eta": "2026-05-27T12:00:00Z"
+  },
+  "metadata": {
+    "tenant": "sample-client",
+    "priority_class": "transactional"
+  },
+  "priority": "high"
+}

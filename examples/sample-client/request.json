@@ -1,0 +1,14 @@
+{
+  "idempotency_key": "payment-789-failure-webhook",
+  "event_name": "payment.failed",
+  "template_key": "payment-failed-v1",
+  "channels": ["webhook"],
+  "recipient": {
+    "user_id": "merchant-45",
+    "webhook": "https://example.com/hooks/payment-failed"
+  },
+  "variables": {
+    "payment_id": "789",
+    "reason": "bank_timeout"
+  }
+}
