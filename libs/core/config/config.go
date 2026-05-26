@@ -14,7 +14,7 @@ type HTTPServiceConfig struct {
 }
 
 func LoadHTTPServiceConfig(serviceName string, defaultPort int) (HTTPServiceConfig, error) {
-	portValue := getEnv("PORT", strconv.Itoa(defaultPort))
+	portValue := GetEnv("PORT", strconv.Itoa(defaultPort))
 	port, err := strconv.Atoi(portValue)
 	if err != nil {
 		return HTTPServiceConfig{}, fmt.Errorf("parse PORT: %w", err)
@@ -23,12 +23,20 @@ func LoadHTTPServiceConfig(serviceName string, defaultPort int) (HTTPServiceConf
 	return HTTPServiceConfig{
 		ServiceName: serviceName,
 		Port:        port,
-		Version:     getEnv("APP_VERSION", "dev"),
-		Environment: getEnv("APP_ENV", "local"),
+		Version:     GetEnv("APP_VERSION", "dev"),
+		Environment: GetEnv("APP_ENV", "local"),
 	}, nil
 }
 
-func getEnv(key, fallback string) string {
+func MustGetEnv(key string) string {
+	value, ok := os.LookupEnv(key)
+	if !ok || value == "" {
+		panic(fmt.Sprintf("missing required environment variable %s", key))
+	}
+	return value
+}
+
+func GetEnv(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok && value != "" {
 		return value
 	}
