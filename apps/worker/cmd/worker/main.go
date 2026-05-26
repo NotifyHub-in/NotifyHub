@@ -93,6 +93,10 @@ func main() {
 		baseURL: config.GetEnv("CONNECTOR_EMAIL_URL", "http://connector-email:8091"),
 		client:  &http.Client{Timeout: 10 * time.Second},
 	}
+	smsConnector := connectorClient{
+		baseURL: config.GetEnv("CONNECTOR_SMS_URL", "http://connector-sms:8092"),
+		client:  &http.Client{Timeout: 10 * time.Second},
+	}
 
 	var status sync.Map
 	status.Store("state", "starting")
@@ -137,7 +141,7 @@ func main() {
 					continue
 				}
 
-				connector, ok := connectorForChannel(channel, webhookConnector, emailConnector)
+				connector, ok := connectorForChannel(channel, webhookConnector, emailConnector, smsConnector)
 				if !ok {
 					attempt.Status = notification.DeliveryAttemptUnsupported
 					attempt.ErrorMessage = "connector not implemented in worker happy path"
@@ -222,17 +226,21 @@ func connectorName(channel notification.Channel) string {
 		return "connector-webhook"
 	case notification.ChannelEmail:
 		return "connector-email"
+	case notification.ChannelSMS:
+		return "connector-sms"
 	default:
 		return "unsupported"
 	}
 }
 
-func connectorForChannel(channel notification.Channel, webhook connectorClient, email connectorClient) (connectorClient, bool) {
+func connectorForChannel(channel notification.Channel, webhook connectorClient, email connectorClient, sms connectorClient) (connectorClient, bool) {
 	switch channel {
 	case notification.ChannelWebhook:
 		return webhook, true
 	case notification.ChannelEmail:
 		return email, true
+	case notification.ChannelSMS:
+		return sms, true
 	default:
 		return connectorClient{}, false
 	}

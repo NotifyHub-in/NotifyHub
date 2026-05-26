@@ -80,6 +80,7 @@ services:
       KAFKA_WORKER_GROUP_ID: notification-worker
       CONNECTOR_WEBHOOK_URL: http://connector-webhook:8093
       CONNECTOR_EMAIL_URL: http://connector-email:8091
+      CONNECTOR_SMS_URL: http://connector-sms:8092
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,6 +89,8 @@ services:
       connector-webhook:
         condition: service_started
       connector-email:
+        condition: service_started
+      connector-sms:
         condition: service_started
     ports:
       - "8081:8081"
