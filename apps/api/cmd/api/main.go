@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/your-org/notification-control-plane/libs/contracts/notification"
@@ -73,6 +74,32 @@ func main() {
 			}
 
 			if err := store.CreateNotificationRequest(r.Context(), record); err != nil {
+				if errors.Is(err, postgres.ErrConflict) {
+					existing, lookupErr := store.GetNotificationRequestByIdempotencyKey(r.Context(), req.IdempotencyKey)
+					if lookupErr != nil {
+						logger.Error("load conflicting notification request failed", "error", lookupErr, "idempotency_key", req.IdempotencyKey)
+						httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load existing notification request"})
+						return
+					}
+
+					if !sameNotificationIntent(existing, req) {
+						httpx.WriteJSON(w, http.StatusConflict, map[string]any{
+							"error":      "idempotency_key already used for a different notification request",
+							"request_id": existing.RequestID,
+							"status":     existing.Status,
+						})
+						return
+					}
+
+					httpx.WriteJSON(w, http.StatusOK, notification.NotificationAccepted{
+						RequestID:        existing.RequestID,
+						Status:           existing.Status,
+						AcceptedAt:       existing.RequestedAt,
+						IdempotentReplay: true,
+					})
+					return
+				}
+
 				logger.Error("create notification request failed", "error", err)
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "persist notification request"})
 				return
@@ -523,4 +550,14 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func sameNotificationIntent(existing notification.NotificationRecord, incoming notification.NotificationRequest) bool {
+	return existing.EventName == incoming.EventName &&
+		existing.TemplateKey == incoming.TemplateKey &&
+		reflect.DeepEqual(existing.Channels, incoming.Channels) &&
+		reflect.DeepEqual(existing.Recipient, incoming.Recipient) &&
+		reflect.DeepEqual(existing.Variables, incoming.Variables) &&
+		reflect.DeepEqual(existing.Metadata, incoming.Metadata) &&
+		existing.Priority == incoming.Priority
 }

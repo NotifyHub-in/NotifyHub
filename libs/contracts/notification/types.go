@@ -57,9 +57,10 @@ type NotificationRequest struct {
 }
 
 type NotificationAccepted struct {
-	RequestID  string        `json:"request_id"`
-	Status     RequestStatus `json:"status"`
-	AcceptedAt time.Time     `json:"accepted_at"`
+	RequestID        string        `json:"request_id"`
+	Status           RequestStatus `json:"status"`
+	AcceptedAt       time.Time     `json:"accepted_at"`
+	IdempotentReplay bool          `json:"idempotent_replay,omitempty"`
 }
 
 type NotificationRecord struct {

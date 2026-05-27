@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/your-org/notification-control-plane/libs/contracts/notification"
 )
 
 var ErrNotFound = errors.New("record not found")
+var ErrConflict = errors.New("record conflict")
 
 type Store struct {
 	db *sql.DB
@@ -78,10 +80,73 @@ func (s *Store) CreateNotificationRequest(ctx context.Context, record notificati
 		record.RequestedAt,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrConflict
+		}
 		return fmt.Errorf("insert notification request: %w", err)
 	}
 
 	return nil
+}
+
+func (s *Store) GetNotificationRequestByIdempotencyKey(ctx context.Context, idempotencyKey string) (notification.NotificationRecord, error) {
+	const query = `
+		SELECT request_id, idempotency_key, event_name, template_key, channels, recipient, variables,
+		       metadata, priority, status, requested_at, created_at, updated_at
+		FROM notification_requests
+		WHERE idempotency_key = $1
+		LIMIT 1
+	`
+
+	var (
+		record        notification.NotificationRecord
+		channelsJSON  []byte
+		recipientJSON []byte
+		variablesJSON []byte
+		metadataJSON  []byte
+	)
+
+	err := s.db.QueryRowContext(ctx, query, idempotencyKey).Scan(
+		&record.RequestID,
+		&record.IdempotencyKey,
+		&record.EventName,
+		&record.TemplateKey,
+		&channelsJSON,
+		&recipientJSON,
+		&variablesJSON,
+		&metadataJSON,
+		&record.Priority,
+		&record.Status,
+		&record.RequestedAt,
+		&record.CreatedAt,
+		&record.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return notification.NotificationRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return notification.NotificationRecord{}, fmt.Errorf("query notification request by idempotency key: %w", err)
+	}
+
+	if err := json.Unmarshal(channelsJSON, &record.Channels); err != nil {
+		return notification.NotificationRecord{}, fmt.Errorf("unmarshal channels: %w", err)
+	}
+	if err := json.Unmarshal(recipientJSON, &record.Recipient); err != nil {
+		return notification.NotificationRecord{}, fmt.Errorf("unmarshal recipient: %w", err)
+	}
+	if len(variablesJSON) > 0 {
+		if err := json.Unmarshal(variablesJSON, &record.Variables); err != nil {
+			return notification.NotificationRecord{}, fmt.Errorf("unmarshal variables: %w", err)
+		}
+	}
+	if len(metadataJSON) > 0 {
+		if err := json.Unmarshal(metadataJSON, &record.Metadata); err != nil {
+			return notification.NotificationRecord{}, fmt.Errorf("unmarshal metadata: %w", err)
+		}
+	}
+
+	return record, nil
 }
 
 func (s *Store) GetNotificationRequest(ctx context.Context, requestID string) (notification.NotificationRecord, error) {
