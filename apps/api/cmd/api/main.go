@@ -351,6 +351,64 @@ func main() {
 			httpx.WriteJSON(w, http.StatusOK, saved)
 		})
 
+		mux.HandleFunc("GET /v1/delivery-policies", func(w http.ResponseWriter, r *http.Request) {
+			policies, err := store.ListDeliveryPolicies(r.Context())
+			if err != nil {
+				logger.Error("list delivery policies failed", "error", err)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load delivery policies"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"delivery_policies": policies})
+		})
+
+		mux.HandleFunc("GET /v1/delivery-policies/{channel}", func(w http.ResponseWriter, r *http.Request) {
+			channel := notification.Channel(r.PathValue("channel"))
+			policy, err := store.GetDeliveryPolicyByChannel(r.Context(), channel)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "delivery policy not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("get delivery policy failed", "error", err, "channel", channel)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load delivery policy"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, policy)
+		})
+
+		mux.HandleFunc("POST /v1/delivery-policies", func(w http.ResponseWriter, r *http.Request) {
+			var req notification.DeliveryPolicyUpsertRequest
+			if err := httpx.DecodeJSON(r, &req); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid delivery policy payload"})
+				return
+			}
+			if req.Channel == "" || req.MaxAttempts < 1 || req.BackoffSeconds < 0 {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "channel is required, max_attempts must be at least 1, and backoff_seconds cannot be negative"})
+				return
+			}
+
+			policy := notification.DeliveryPolicy{
+				PolicyID:       id.New(12),
+				Channel:        req.Channel,
+				MaxAttempts:    req.MaxAttempts,
+				BackoffSeconds: req.BackoffSeconds,
+				Enabled:        req.Enabled,
+			}
+			if err := store.UpsertDeliveryPolicy(r.Context(), policy); err != nil {
+				logger.Error("upsert delivery policy failed", "error", err, "channel", req.Channel)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save delivery policy"})
+				return
+			}
+
+			saved, err := store.GetDeliveryPolicyByChannel(r.Context(), req.Channel)
+			if err != nil {
+				logger.Error("reload delivery policy failed", "error", err, "channel", req.Channel)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload delivery policy"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, saved)
+		})
+
 		mux.HandleFunc("GET /v1/notification-requests/{requestID}", func(w http.ResponseWriter, r *http.Request) {
 			requestID := r.PathValue("requestID")
 			record, err := store.GetNotificationRequest(r.Context(), requestID)
@@ -380,8 +438,8 @@ func main() {
 		mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"service": info.Name,
-				"phase":   "templates",
-				"state":   "api persists requests, provider bindings, routing policies, preference policies, and templates",
+				"phase":   "delivery-policies",
+				"state":   "api persists requests, provider bindings, routing policies, preference policies, templates, and delivery policies",
 				"topic":   topic,
 			})
 		})

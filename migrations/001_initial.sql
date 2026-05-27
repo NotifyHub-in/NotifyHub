@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS notification_requests (
 CREATE TABLE IF NOT EXISTS delivery_attempts (
     attempt_id TEXT PRIMARY KEY,
     request_id TEXT NOT NULL REFERENCES notification_requests(request_id) ON DELETE CASCADE,
+    attempt_number INTEGER NOT NULL DEFAULT 1,
+    max_attempts INTEGER NOT NULL DEFAULT 1,
     channel TEXT NOT NULL,
     connector_name TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -33,6 +35,9 @@ CREATE TABLE IF NOT EXISTS delivery_attempts (
 );
 
 CREATE INDEX IF NOT EXISTS delivery_attempts_request_id_idx ON delivery_attempts(request_id);
+
+ALTER TABLE delivery_attempts ADD COLUMN IF NOT EXISTS attempt_number INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE delivery_attempts ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 1;
 
 CREATE TABLE IF NOT EXISTS provider_bindings (
     binding_id TEXT PRIMARY KEY,
@@ -99,3 +104,20 @@ VALUES
     ('template-otp-requested-sms', 'otp-requested-v1', 'sms', '', 'Your OTP is {{otp}}.', TRUE),
     ('template-payment-failed-webhook', 'payment-failed-v1', 'webhook', '', '{"event":"payment.failed","payment_id":"{{payment_id}}","reason":"{{reason}}"}', TRUE)
 ON CONFLICT (template_key, channel) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS delivery_policies (
+    policy_id TEXT PRIMARY KEY,
+    channel TEXT NOT NULL UNIQUE,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    backoff_seconds INTEGER NOT NULL DEFAULT 1,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO delivery_policies (policy_id, channel, max_attempts, backoff_seconds, enabled)
+VALUES
+    ('delivery-policy-email', 'email', 3, 1, TRUE),
+    ('delivery-policy-sms', 'sms', 3, 1, TRUE),
+    ('delivery-policy-webhook', 'webhook', 3, 1, TRUE)
+ON CONFLICT (channel) DO NOTHING;

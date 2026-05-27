@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -146,11 +147,35 @@ func main() {
 			}
 
 			for _, channel := range allowedChannels {
-				tmpl, err := store.GetTemplateByKeyAndChannel(messageCtx, plan.Request.TemplateKey, channel)
-				if err == postgres.ErrNotFound {
+				deliveryPolicy, err := resolveDeliveryPolicy(messageCtx, store, channel)
+				if err != nil {
+					status.Store("last_error", err.Error())
+					logger.Error("load delivery policy failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel)
 					attempt := notification.DeliveryAttempt{
 						AttemptID:     id.New(12),
 						RequestID:     plan.Request.RequestID,
+						AttemptNumber: 1,
+						MaxAttempts:   1,
+						Channel:       channel,
+						ConnectorName: connectorName(channel),
+						Status:        notification.DeliveryAttemptFailed,
+						Destination:   destination(plan.Request, channel),
+						ErrorMessage:  err.Error(),
+					}
+					if createErr := store.CreateDeliveryAttempt(messageCtx, attempt); createErr != nil {
+						logger.Error("create failed delivery policy attempt failed", "error", createErr, "request_id", plan.Request.RequestID, "channel", channel)
+					}
+					attemptStats.failed++
+					continue
+				}
+
+				tmpl, err := store.GetTemplateByKeyAndChannel(messageCtx, plan.Request.TemplateKey, channel)
+				if errors.Is(err, postgres.ErrNotFound) {
+					attempt := notification.DeliveryAttempt{
+						AttemptID:     id.New(12),
+						RequestID:     plan.Request.RequestID,
+						AttemptNumber: 1,
+						MaxAttempts:   deliveryPolicy.MaxAttempts,
 						Channel:       channel,
 						ConnectorName: connectorName(channel),
 						Status:        notification.DeliveryAttemptUnsupported,
@@ -169,6 +194,8 @@ func main() {
 					attempt := notification.DeliveryAttempt{
 						AttemptID:     id.New(12),
 						RequestID:     plan.Request.RequestID,
+						AttemptNumber: 1,
+						MaxAttempts:   deliveryPolicy.MaxAttempts,
 						Channel:       channel,
 						ConnectorName: connectorName(channel),
 						Status:        notification.DeliveryAttemptFailed,
@@ -187,6 +214,8 @@ func main() {
 					attempt := notification.DeliveryAttempt{
 						AttemptID:     id.New(12),
 						RequestID:     plan.Request.RequestID,
+						AttemptNumber: 1,
+						MaxAttempts:   deliveryPolicy.MaxAttempts,
 						Channel:       channel,
 						ConnectorName: connectorName(channel),
 						Status:        notification.DeliveryAttemptFailed,
@@ -205,6 +234,8 @@ func main() {
 					attempt := notification.DeliveryAttempt{
 						AttemptID:     id.New(12),
 						RequestID:     plan.Request.RequestID,
+						AttemptNumber: 1,
+						MaxAttempts:   deliveryPolicy.MaxAttempts,
 						Channel:       channel,
 						ConnectorName: connectorName(channel),
 						Status:        notification.DeliveryAttemptFailed,
@@ -219,10 +250,12 @@ func main() {
 				}
 
 				binding, err := store.GetProviderBindingByChannel(messageCtx, channel)
-				if err == postgres.ErrNotFound {
+				if errors.Is(err, postgres.ErrNotFound) {
 					attempt := notification.DeliveryAttempt{
 						AttemptID:     id.New(12),
 						RequestID:     plan.Request.RequestID,
+						AttemptNumber: 1,
+						MaxAttempts:   deliveryPolicy.MaxAttempts,
 						Channel:       channel,
 						ConnectorName: connectorName(channel),
 						Status:        notification.DeliveryAttemptUnsupported,
@@ -241,6 +274,8 @@ func main() {
 					attempt := notification.DeliveryAttempt{
 						AttemptID:     id.New(12),
 						RequestID:     plan.Request.RequestID,
+						AttemptNumber: 1,
+						MaxAttempts:   deliveryPolicy.MaxAttempts,
 						Channel:       channel,
 						ConnectorName: connectorName(channel),
 						Status:        notification.DeliveryAttemptFailed,
@@ -254,67 +289,96 @@ func main() {
 					continue
 				}
 
-				attempt := notification.DeliveryAttempt{
-					AttemptID:     id.New(12),
-					RequestID:     plan.Request.RequestID,
-					Channel:       channel,
-					ConnectorName: binding.ConnectorName,
-					Status:        notification.DeliveryAttemptPending,
-					Destination:   destination(plan.Request, channel),
-				}
-
-				if err := store.CreateDeliveryAttempt(messageCtx, attempt); err != nil {
-					status.Store("last_error", err.Error())
-					logger.Error("create delivery attempt failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel)
-					attemptStats.failed++
-					continue
-				}
-
 				connector := connectorClient{
 					baseURL: binding.EndpointURL,
 					client:  &http.Client{Timeout: 10 * time.Second},
 				}
 
 				if !supportedChannel(channel) {
-					attempt.Status = notification.DeliveryAttemptUnsupported
-					attempt.ErrorMessage = "connector not implemented in worker happy path"
-					if err := store.UpdateDeliveryAttempt(messageCtx, attempt); err != nil {
-						logger.Error("update unsupported delivery attempt failed", "error", err, "attempt_id", attempt.AttemptID)
+					attempt := notification.DeliveryAttempt{
+						AttemptID:     id.New(12),
+						RequestID:     plan.Request.RequestID,
+						AttemptNumber: 1,
+						MaxAttempts:   deliveryPolicy.MaxAttempts,
+						Channel:       channel,
+						ConnectorName: binding.ConnectorName,
+						Status:        notification.DeliveryAttemptUnsupported,
+						Destination:   destination(plan.Request, channel),
+						ErrorMessage:  "connector not implemented in worker happy path",
+					}
+					if err := store.CreateDeliveryAttempt(messageCtx, attempt); err != nil {
+						logger.Error("create unsupported delivery attempt failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel)
 					}
 					attemptStats.unsupported++
 					continue
 				}
 
-				sendReq := notification.ConnectorSendRequest{
-					RequestID:   plan.Request.RequestID,
-					Channel:     channel,
-					Destination: destination(plan.Request, channel),
-					Subject:     subject,
-					Body:        body,
-					Metadata:    plan.Request.Metadata,
-				}
+				sent := false
+				for attemptNumber := 1; attemptNumber <= deliveryPolicy.MaxAttempts; attemptNumber++ {
+					attempt := notification.DeliveryAttempt{
+						AttemptID:     id.New(12),
+						RequestID:     plan.Request.RequestID,
+						AttemptNumber: attemptNumber,
+						MaxAttempts:   deliveryPolicy.MaxAttempts,
+						Channel:       channel,
+						ConnectorName: binding.ConnectorName,
+						Status:        notification.DeliveryAttemptPending,
+						Destination:   destination(plan.Request, channel),
+					}
 
-				sendResp, err := connector.send(messageCtx, sendReq)
-				if err != nil {
+					if err := store.CreateDeliveryAttempt(messageCtx, attempt); err != nil {
+						status.Store("last_error", err.Error())
+						logger.Error("create delivery attempt failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel, "attempt_number", attemptNumber)
+						attemptStats.failed++
+						break
+					}
+
+					sendReq := notification.ConnectorSendRequest{
+						RequestID:   plan.Request.RequestID,
+						Channel:     channel,
+						Destination: destination(plan.Request, channel),
+						Subject:     subject,
+						Body:        body,
+						Metadata:    plan.Request.Metadata,
+					}
+
+					sendResp, err := connector.send(messageCtx, sendReq)
+					if err == nil {
+						attempt.Status = notification.DeliveryAttemptAccepted
+						attempt.ProviderMessageID = sendResp.ProviderMessageID
+						if err := store.UpdateDeliveryAttempt(messageCtx, attempt); err != nil {
+							logger.Error("update accepted delivery attempt failed", "error", err, "attempt_id", attempt.AttemptID)
+							attemptStats.failed++
+							break
+						}
+						attemptStats.accepted++
+						sent = true
+						break
+					}
+
 					status.Store("last_error", err.Error())
-					logger.Error("connector send failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel)
+					logger.Error("connector send failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel, "attempt_number", attemptNumber, "max_attempts", deliveryPolicy.MaxAttempts)
 					attempt.Status = notification.DeliveryAttemptFailed
 					attempt.ErrorMessage = err.Error()
 					if err := store.UpdateDeliveryAttempt(messageCtx, attempt); err != nil {
 						logger.Error("update failed delivery attempt failed", "error", err, "attempt_id", attempt.AttemptID)
 					}
-					attemptStats.failed++
-					continue
+
+					if attemptNumber == deliveryPolicy.MaxAttempts {
+						attemptStats.failed++
+						break
+					}
+
+					if err := sleepWithContext(messageCtx, time.Duration(deliveryPolicy.BackoffSeconds)*time.Second); err != nil {
+						logger.Error("retry backoff interrupted", "error", err, "request_id", plan.Request.RequestID, "channel", channel)
+						attemptStats.failed++
+						break
+					}
 				}
 
-				attempt.Status = notification.DeliveryAttemptAccepted
-				attempt.ProviderMessageID = sendResp.ProviderMessageID
-				if err := store.UpdateDeliveryAttempt(messageCtx, attempt); err != nil {
-					logger.Error("update accepted delivery attempt failed", "error", err, "attempt_id", attempt.AttemptID)
-					attemptStats.failed++
+				if !sent {
 					continue
 				}
-				attemptStats.accepted++
 			}
 
 			finalStatus := attemptStats.finalStatus()
@@ -341,7 +405,7 @@ func main() {
 		mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"service":         info.Name,
-				"phase":           "templates",
+				"phase":           "delivery-policies",
 				"state":           loadString(&status, "state"),
 				"last_request_id": loadString(&status, "last_request_id"),
 				"last_heartbeat":  loadString(&status, "last_heartbeat"),
@@ -444,6 +508,44 @@ func resolvePreferredChannels(ctx context.Context, store *postgres.Store, record
 	}
 
 	return allowed, suppressed, nil
+}
+
+func resolveDeliveryPolicy(ctx context.Context, store *postgres.Store, channel notification.Channel) (notification.DeliveryPolicy, error) {
+	policy, err := store.GetDeliveryPolicyByChannel(ctx, channel)
+	if errors.Is(err, postgres.ErrNotFound) {
+		return notification.DeliveryPolicy{
+			Channel:        channel,
+			MaxAttempts:    1,
+			BackoffSeconds: 0,
+			Enabled:        true,
+		}, nil
+	}
+	if err != nil {
+		return notification.DeliveryPolicy{}, err
+	}
+	if policy.MaxAttempts < 1 {
+		policy.MaxAttempts = 1
+	}
+	if policy.BackoffSeconds < 0 {
+		policy.BackoffSeconds = 0
+	}
+	return policy, nil
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 type deliveryStats struct {

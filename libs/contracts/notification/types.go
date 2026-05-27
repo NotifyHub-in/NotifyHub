@@ -79,6 +79,8 @@ type NotificationRecord struct {
 type DeliveryAttempt struct {
 	AttemptID         string                `json:"attempt_id"`
 	RequestID         string                `json:"request_id"`
+	AttemptNumber     int                   `json:"attempt_number"`
+	MaxAttempts       int                   `json:"max_attempts"`
 	Channel           Channel               `json:"channel"`
 	ConnectorName     string                `json:"connector_name"`
 	Status            DeliveryAttemptStatus `json:"status"`
@@ -161,6 +163,23 @@ type TemplateUpsertRequest struct {
 	SubjectTemplate string  `json:"subject_template,omitempty"`
 	BodyTemplate    string  `json:"body_template"`
 	Enabled         bool    `json:"enabled"`
+}
+
+type DeliveryPolicy struct {
+	PolicyID       string    `json:"policy_id"`
+	Channel        Channel   `json:"channel"`
+	MaxAttempts    int       `json:"max_attempts"`
+	BackoffSeconds int       `json:"backoff_seconds"`
+	Enabled        bool      `json:"enabled"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type DeliveryPolicyUpsertRequest struct {
+	Channel        Channel `json:"channel"`
+	MaxAttempts    int     `json:"max_attempts"`
+	BackoffSeconds int     `json:"backoff_seconds"`
+	Enabled        bool    `json:"enabled"`
 }
 
 type ConnectorSendRequest struct {

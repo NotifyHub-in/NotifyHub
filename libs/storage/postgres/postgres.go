@@ -161,13 +161,15 @@ func (s *Store) UpdateNotificationRequestStatus(ctx context.Context, requestID s
 func (s *Store) CreateDeliveryAttempt(ctx context.Context, attempt notification.DeliveryAttempt) error {
 	const query = `
 		INSERT INTO delivery_attempts (
-			attempt_id, request_id, channel, connector_name, status, provider_message_id, destination, error_message
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			attempt_id, request_id, attempt_number, max_attempts, channel, connector_name, status, provider_message_id, destination, error_message
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`
 
 	_, err := s.db.ExecContext(ctx, query,
 		attempt.AttemptID,
 		attempt.RequestID,
+		attempt.AttemptNumber,
+		attempt.MaxAttempts,
 		attempt.Channel,
 		attempt.ConnectorName,
 		attempt.Status,
@@ -211,10 +213,10 @@ func (s *Store) UpdateDeliveryAttempt(ctx context.Context, attempt notification.
 func (s *Store) ListDeliveryAttempts(ctx context.Context, requestID string) ([]notification.DeliveryAttempt, error) {
 	const query = `
 		SELECT attempt_id, request_id, channel, connector_name, status, provider_message_id,
-		       destination, error_message, created_at, updated_at
+		       destination, error_message, attempt_number, max_attempts, created_at, updated_at
 		FROM delivery_attempts
 		WHERE request_id = $1
-		ORDER BY created_at ASC
+		ORDER BY attempt_number ASC, created_at ASC
 	`
 
 	rows, err := s.db.QueryContext(ctx, query, requestID)
@@ -235,6 +237,8 @@ func (s *Store) ListDeliveryAttempts(ctx context.Context, requestID string) ([]n
 			&attempt.ProviderMessageID,
 			&attempt.Destination,
 			&attempt.ErrorMessage,
+			&attempt.AttemptNumber,
+			&attempt.MaxAttempts,
 			&attempt.CreatedAt,
 			&attempt.UpdatedAt,
 		); err != nil {
@@ -626,4 +630,92 @@ func (s *Store) GetTemplateByKeyAndChannel(ctx context.Context, templateKey stri
 		return notification.Template{}, fmt.Errorf("query template: %w", err)
 	}
 	return tmpl, nil
+}
+
+func (s *Store) UpsertDeliveryPolicy(ctx context.Context, policy notification.DeliveryPolicy) error {
+	const query = `
+		INSERT INTO delivery_policies (
+			policy_id, channel, max_attempts, backoff_seconds, enabled
+		) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (channel)
+		DO UPDATE SET
+			max_attempts = EXCLUDED.max_attempts,
+			backoff_seconds = EXCLUDED.backoff_seconds,
+			enabled = EXCLUDED.enabled,
+			updated_at = NOW()
+	`
+
+	_, err := s.db.ExecContext(ctx, query,
+		policy.PolicyID,
+		policy.Channel,
+		policy.MaxAttempts,
+		policy.BackoffSeconds,
+		policy.Enabled,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert delivery policy: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListDeliveryPolicies(ctx context.Context) ([]notification.DeliveryPolicy, error) {
+	const query = `
+		SELECT policy_id, channel, max_attempts, backoff_seconds, enabled, created_at, updated_at
+		FROM delivery_policies
+		ORDER BY channel ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query delivery policies: %w", err)
+	}
+	defer rows.Close()
+
+	var policies []notification.DeliveryPolicy
+	for rows.Next() {
+		var policy notification.DeliveryPolicy
+		if err := rows.Scan(
+			&policy.PolicyID,
+			&policy.Channel,
+			&policy.MaxAttempts,
+			&policy.BackoffSeconds,
+			&policy.Enabled,
+			&policy.CreatedAt,
+			&policy.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan delivery policy: %w", err)
+		}
+		policies = append(policies, policy)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate delivery policies: %w", err)
+	}
+	return policies, nil
+}
+
+func (s *Store) GetDeliveryPolicyByChannel(ctx context.Context, channel notification.Channel) (notification.DeliveryPolicy, error) {
+	const query = `
+		SELECT policy_id, channel, max_attempts, backoff_seconds, enabled, created_at, updated_at
+		FROM delivery_policies
+		WHERE channel = $1 AND enabled = TRUE
+		LIMIT 1
+	`
+
+	var policy notification.DeliveryPolicy
+	err := s.db.QueryRowContext(ctx, query, channel).Scan(
+		&policy.PolicyID,
+		&policy.Channel,
+		&policy.MaxAttempts,
+		&policy.BackoffSeconds,
+		&policy.Enabled,
+		&policy.CreatedAt,
+		&policy.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return notification.DeliveryPolicy{}, ErrNotFound
+	}
+	if err != nil {
+		return notification.DeliveryPolicy{}, fmt.Errorf("query delivery policy: %w", err)
+	}
+	return policy, nil
 }
