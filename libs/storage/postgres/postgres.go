@@ -358,9 +358,8 @@ func (s *Store) UpsertProviderBinding(ctx context.Context, binding notification.
 		INSERT INTO provider_bindings (
 			binding_id, channel, connector_name, endpoint_url, enabled, priority
 		) VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (channel)
+		ON CONFLICT (channel, connector_name)
 		DO UPDATE SET
-			connector_name = EXCLUDED.connector_name,
 			endpoint_url = EXCLUDED.endpoint_url,
 			enabled = EXCLUDED.enabled,
 			priority = EXCLUDED.priority,
@@ -417,33 +416,52 @@ func (s *Store) ListProviderBindings(ctx context.Context) ([]notification.Provid
 	return bindings, nil
 }
 
-func (s *Store) GetProviderBindingByChannel(ctx context.Context, channel notification.Channel) (notification.ProviderBinding, error) {
+func (s *Store) ListProviderBindingsByChannel(ctx context.Context, channel notification.Channel) ([]notification.ProviderBinding, error) {
 	const query = `
 		SELECT binding_id, channel, connector_name, endpoint_url, enabled, priority, created_at, updated_at
 		FROM provider_bindings
 		WHERE channel = $1 AND enabled = TRUE
-		ORDER BY priority ASC
-		LIMIT 1
+		ORDER BY priority ASC, connector_name ASC
 	`
 
-	var binding notification.ProviderBinding
-	err := s.db.QueryRowContext(ctx, query, channel).Scan(
-		&binding.BindingID,
-		&binding.Channel,
-		&binding.ConnectorName,
-		&binding.EndpointURL,
-		&binding.Enabled,
-		&binding.Priority,
-		&binding.CreatedAt,
-		&binding.UpdatedAt,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return notification.ProviderBinding{}, ErrNotFound
-	}
+	rows, err := s.db.QueryContext(ctx, query, channel)
 	if err != nil {
-		return notification.ProviderBinding{}, fmt.Errorf("query provider binding: %w", err)
+		return nil, fmt.Errorf("query provider bindings by channel: %w", err)
 	}
-	return binding, nil
+	defer rows.Close()
+
+	var bindings []notification.ProviderBinding
+	for rows.Next() {
+		var binding notification.ProviderBinding
+		if err := rows.Scan(
+			&binding.BindingID,
+			&binding.Channel,
+			&binding.ConnectorName,
+			&binding.EndpointURL,
+			&binding.Enabled,
+			&binding.Priority,
+			&binding.CreatedAt,
+			&binding.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan provider binding by channel: %w", err)
+		}
+		bindings = append(bindings, binding)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate provider bindings by channel: %w", err)
+	}
+	if len(bindings) == 0 {
+		return nil, ErrNotFound
+	}
+	return bindings, nil
+}
+
+func (s *Store) GetProviderBindingByChannel(ctx context.Context, channel notification.Channel) (notification.ProviderBinding, error) {
+	bindings, err := s.ListProviderBindingsByChannel(ctx, channel)
+	if err != nil {
+		return notification.ProviderBinding{}, err
+	}
+	return bindings[0], nil
 }
 
 func (s *Store) UpsertRoutingPolicy(ctx context.Context, policy notification.RoutingPolicy) error {

@@ -17,6 +17,7 @@ import (
 	"github.com/your-org/notification-control-plane/libs/core/webhooks"
 	kafkamq "github.com/your-org/notification-control-plane/libs/messaging/kafka"
 	"github.com/your-org/notification-control-plane/libs/observability/logging"
+	"github.com/your-org/notification-control-plane/libs/observability/metrics"
 	"github.com/your-org/notification-control-plane/libs/storage/postgres"
 )
 
@@ -28,6 +29,7 @@ func main() {
 
 	logger := logging.New(cfg.ServiceName)
 	ctx := context.Background()
+	registry := metrics.NewRegistry(cfg.ServiceName)
 
 	store, err := postgres.Open(ctx, config.MustGetEnv("DATABASE_URL"))
 	if err != nil {
@@ -45,15 +47,17 @@ func main() {
 	publisher := kafkamq.NewPublisher(brokers, topic)
 	defer publisher.Close()
 
-	err = app.RunHTTPService(cfg, logger, func(mux *http.ServeMux, info serviceinfo.Info) {
+	err = app.RunHTTPService(cfg, logger, registry, func(mux *http.ServeMux, info serviceinfo.Info, registry *metrics.Registry) {
 		mux.HandleFunc("POST /v1/notification-requests", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.NotificationRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
+				registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "invalid_payload"})
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request payload"})
 				return
 			}
 
 			if req.EventName == "" || req.TemplateKey == "" || req.IdempotencyKey == "" {
+				registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "validation_failed"})
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "event_name, template_key, and idempotency_key are required"})
 				return
 			}
@@ -77,12 +81,14 @@ func main() {
 				if errors.Is(err, postgres.ErrConflict) {
 					existing, lookupErr := store.GetNotificationRequestByIdempotencyKey(r.Context(), req.IdempotencyKey)
 					if lookupErr != nil {
+						registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "conflict_lookup_failed"})
 						logger.Error("load conflicting notification request failed", "error", lookupErr, "idempotency_key", req.IdempotencyKey)
 						httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load existing notification request"})
 						return
 					}
 
 					if !sameNotificationIntent(existing, req) {
+						registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "conflict"})
 						httpx.WriteJSON(w, http.StatusConflict, map[string]any{
 							"error":      "idempotency_key already used for a different notification request",
 							"request_id": existing.RequestID,
@@ -91,6 +97,7 @@ func main() {
 						return
 					}
 
+					registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "idempotent_replay"})
 					httpx.WriteJSON(w, http.StatusOK, notification.NotificationAccepted{
 						RequestID:        existing.RequestID,
 						Status:           existing.Status,
@@ -100,12 +107,14 @@ func main() {
 					return
 				}
 
+				registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "persist_failed"})
 				logger.Error("create notification request failed", "error", err)
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "persist notification request"})
 				return
 			}
 
 			if err := publisher.PublishJSON(r.Context(), record.RequestID, notification.DeliveryPlan{Request: record}); err != nil {
+				registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "enqueue_failed"})
 				logger.Error("publish notification request failed", "error", err, "request_id", record.RequestID)
 				_ = store.UpdateNotificationRequestStatus(r.Context(), record.RequestID, notification.RequestStatusFailed)
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "enqueue notification request"})
@@ -116,6 +125,10 @@ func main() {
 				logger.Error("notify accepted lifecycle webhook failed", "error", err, "request_id", record.RequestID)
 			}
 
+			registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{
+				"outcome":  "accepted",
+				"priority": string(record.Priority),
+			})
 			httpx.WriteJSON(w, http.StatusAccepted, notification.NotificationAccepted{
 				RequestID:  record.RequestID,
 				Status:     notification.RequestStatusAccepted,
@@ -152,7 +165,7 @@ func main() {
 
 		mux.HandleFunc("GET /v1/provider-bindings/{channel}", func(w http.ResponseWriter, r *http.Request) {
 			channel := notification.Channel(r.PathValue("channel"))
-			binding, err := store.GetProviderBindingByChannel(r.Context(), channel)
+			bindings, err := store.ListProviderBindingsByChannel(r.Context(), channel)
 			if errors.Is(err, postgres.ErrNotFound) {
 				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "provider binding not found"})
 				return
@@ -162,7 +175,10 @@ func main() {
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider binding"})
 				return
 			}
-			httpx.WriteJSON(w, http.StatusOK, binding)
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"channel":           channel,
+				"provider_bindings": bindings,
+			})
 		})
 
 		mux.HandleFunc("POST /v1/provider-bindings", func(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,7 @@ import (
 	"github.com/your-org/notification-control-plane/libs/core/httpx"
 	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
 	"github.com/your-org/notification-control-plane/libs/observability/logging"
+	"github.com/your-org/notification-control-plane/libs/observability/metrics"
 )
 
 func main() {
@@ -22,7 +23,7 @@ func main() {
 
 	logger := logging.New(cfg.ServiceName)
 
-	err = app.RunHTTPService(cfg, logger, func(mux *http.ServeMux, info serviceinfo.Info) {
+	err = app.RunHTTPService(cfg, logger, nil, func(mux *http.ServeMux, info serviceinfo.Info, _ *metrics.Registry) {
 		mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, notification.ConnectorCapabilities{
 				Name:     "sms",

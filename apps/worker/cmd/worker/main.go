@@ -21,6 +21,7 @@ import (
 	"github.com/your-org/notification-control-plane/libs/core/webhooks"
 	kafkamq "github.com/your-org/notification-control-plane/libs/messaging/kafka"
 	"github.com/your-org/notification-control-plane/libs/observability/logging"
+	"github.com/your-org/notification-control-plane/libs/observability/metrics"
 	"github.com/your-org/notification-control-plane/libs/storage/postgres"
 )
 
@@ -70,6 +71,7 @@ func main() {
 	logger := logging.New(cfg.ServiceName)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	registry := metrics.NewRegistry(cfg.ServiceName)
 
 	store, err := postgres.Open(ctx, config.MustGetEnv("DATABASE_URL"))
 	if err != nil {
@@ -145,6 +147,7 @@ func main() {
 					attemptStats.failed++
 					continue
 				}
+				recordDeliveryAttemptMetric(registry, attempt)
 				attemptStats.suppressed++
 			}
 
@@ -167,6 +170,7 @@ func main() {
 					if createErr := store.CreateDeliveryAttempt(messageCtx, attempt); createErr != nil {
 						logger.Error("create failed delivery policy attempt failed", "error", createErr, "request_id", plan.Request.RequestID, "channel", channel)
 					}
+					recordDeliveryAttemptMetric(registry, attempt)
 					attemptStats.failed++
 					continue
 				}
@@ -187,6 +191,7 @@ func main() {
 					if err := store.CreateDeliveryAttempt(messageCtx, attempt); err != nil {
 						logger.Error("create unsupported template delivery attempt failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel)
 					}
+					recordDeliveryAttemptMetric(registry, attempt)
 					attemptStats.unsupported++
 					continue
 				}
@@ -207,6 +212,7 @@ func main() {
 					if createErr := store.CreateDeliveryAttempt(messageCtx, attempt); createErr != nil {
 						logger.Error("create failed template delivery attempt failed", "error", createErr, "request_id", plan.Request.RequestID, "channel", channel)
 					}
+					recordDeliveryAttemptMetric(registry, attempt)
 					attemptStats.failed++
 					continue
 				}
@@ -227,6 +233,7 @@ func main() {
 					if createErr := store.CreateDeliveryAttempt(messageCtx, attempt); createErr != nil {
 						logger.Error("create failed subject render attempt failed", "error", createErr, "request_id", plan.Request.RequestID, "channel", channel)
 					}
+					recordDeliveryAttemptMetric(registry, attempt)
 					attemptStats.failed++
 					continue
 				}
@@ -247,11 +254,32 @@ func main() {
 					if createErr := store.CreateDeliveryAttempt(messageCtx, attempt); createErr != nil {
 						logger.Error("create failed body render attempt failed", "error", createErr, "request_id", plan.Request.RequestID, "channel", channel)
 					}
+					recordDeliveryAttemptMetric(registry, attempt)
 					attemptStats.failed++
 					continue
 				}
 
-				binding, err := store.GetProviderBindingByChannel(messageCtx, channel)
+				if !supportedChannel(channel) {
+					attempt := notification.DeliveryAttempt{
+						AttemptID:     id.New(12),
+						RequestID:     plan.Request.RequestID,
+						AttemptNumber: 1,
+						MaxAttempts:   1,
+						Channel:       channel,
+						ConnectorName: connectorName(channel),
+						Status:        notification.DeliveryAttemptUnsupported,
+						Destination:   destination(plan.Request, channel),
+						ErrorMessage:  "connector not implemented in worker happy path",
+					}
+					if err := store.CreateDeliveryAttempt(messageCtx, attempt); err != nil {
+						logger.Error("create unsupported delivery attempt failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel)
+					}
+					recordDeliveryAttemptMetric(registry, attempt)
+					attemptStats.unsupported++
+					continue
+				}
+
+				bindings, err := store.ListProviderBindingsByChannel(messageCtx, channel)
 				if errors.Is(err, postgres.ErrNotFound) {
 					attempt := notification.DeliveryAttempt{
 						AttemptID:     id.New(12),
@@ -267,12 +295,13 @@ func main() {
 					if err := store.CreateDeliveryAttempt(messageCtx, attempt); err != nil {
 						logger.Error("create unsupported delivery attempt failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel)
 					}
+					recordDeliveryAttemptMetric(registry, attempt)
 					attemptStats.unsupported++
 					continue
 				}
 				if err != nil {
 					status.Store("last_error", err.Error())
-					logger.Error("load provider binding failed", "error", err, "channel", channel)
+					logger.Error("load provider bindings failed", "error", err, "channel", channel)
 					attempt := notification.DeliveryAttempt{
 						AttemptID:     id.New(12),
 						RequestID:     plan.Request.RequestID,
@@ -287,98 +316,96 @@ func main() {
 					if createErr := store.CreateDeliveryAttempt(messageCtx, attempt); createErr != nil {
 						logger.Error("create failed delivery attempt failed", "error", createErr, "request_id", plan.Request.RequestID, "channel", channel)
 					}
+					recordDeliveryAttemptMetric(registry, attempt)
 					attemptStats.failed++
 					continue
 				}
 
-				connector := connectorClient{
-					baseURL: binding.EndpointURL,
-					client:  &http.Client{Timeout: 10 * time.Second},
-				}
-
-				if !supportedChannel(channel) {
-					attempt := notification.DeliveryAttempt{
-						AttemptID:     id.New(12),
-						RequestID:     plan.Request.RequestID,
-						AttemptNumber: 1,
-						MaxAttempts:   deliveryPolicy.MaxAttempts,
-						Channel:       channel,
-						ConnectorName: binding.ConnectorName,
-						Status:        notification.DeliveryAttemptUnsupported,
-						Destination:   destination(plan.Request, channel),
-						ErrorMessage:  "connector not implemented in worker happy path",
-					}
-					if err := store.CreateDeliveryAttempt(messageCtx, attempt); err != nil {
-						logger.Error("create unsupported delivery attempt failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel)
-					}
-					attemptStats.unsupported++
-					continue
-				}
-
 				sent := false
-				for attemptNumber := 1; attemptNumber <= deliveryPolicy.MaxAttempts; attemptNumber++ {
-					attempt := notification.DeliveryAttempt{
-						AttemptID:     id.New(12),
-						RequestID:     plan.Request.RequestID,
-						AttemptNumber: attemptNumber,
-						MaxAttempts:   deliveryPolicy.MaxAttempts,
-						Channel:       channel,
-						ConnectorName: binding.ConnectorName,
-						Status:        notification.DeliveryAttemptPending,
-						Destination:   destination(plan.Request, channel),
+				totalMaxAttempts := deliveryPolicy.MaxAttempts * len(bindings)
+				nextAttemptNumber := 1
+				sendReq := notification.ConnectorSendRequest{
+					RequestID:   plan.Request.RequestID,
+					Channel:     channel,
+					Destination: destination(plan.Request, channel),
+					Subject:     subject,
+					Body:        body,
+					Metadata:    plan.Request.Metadata,
+				}
+
+				for bindingIndex, binding := range bindings {
+					connector := connectorClient{
+						baseURL: binding.EndpointURL,
+						client:  &http.Client{Timeout: 10 * time.Second},
 					}
 
-					if err := store.CreateDeliveryAttempt(messageCtx, attempt); err != nil {
-						status.Store("last_error", err.Error())
-						logger.Error("create delivery attempt failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel, "attempt_number", attemptNumber)
-						attemptStats.failed++
-						break
-					}
+					for bindingAttempt := 1; bindingAttempt <= deliveryPolicy.MaxAttempts; bindingAttempt++ {
+						attempt := notification.DeliveryAttempt{
+							AttemptID:     id.New(12),
+							RequestID:     plan.Request.RequestID,
+							AttemptNumber: nextAttemptNumber,
+							MaxAttempts:   totalMaxAttempts,
+							Channel:       channel,
+							ConnectorName: binding.ConnectorName,
+							Status:        notification.DeliveryAttemptPending,
+							Destination:   destination(plan.Request, channel),
+						}
 
-					sendReq := notification.ConnectorSendRequest{
-						RequestID:   plan.Request.RequestID,
-						Channel:     channel,
-						Destination: destination(plan.Request, channel),
-						Subject:     subject,
-						Body:        body,
-						Metadata:    plan.Request.Metadata,
-					}
-
-					sendResp, err := connector.send(messageCtx, sendReq)
-					if err == nil {
-						attempt.Status = notification.DeliveryAttemptAccepted
-						attempt.ProviderMessageID = sendResp.ProviderMessageID
-						if err := store.UpdateDeliveryAttempt(messageCtx, attempt); err != nil {
-							logger.Error("update accepted delivery attempt failed", "error", err, "attempt_id", attempt.AttemptID)
+						if err := store.CreateDeliveryAttempt(messageCtx, attempt); err != nil {
+							status.Store("last_error", err.Error())
+							logger.Error("create delivery attempt failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel, "attempt_number", nextAttemptNumber, "connector", binding.ConnectorName)
 							attemptStats.failed++
 							break
 						}
-						attemptStats.accepted++
-						sent = true
+
+						sendResp, err := connector.send(messageCtx, sendReq)
+						if err == nil {
+							attempt.Status = notification.DeliveryAttemptAccepted
+							attempt.ProviderMessageID = sendResp.ProviderMessageID
+							if err := store.UpdateDeliveryAttempt(messageCtx, attempt); err != nil {
+								logger.Error("update accepted delivery attempt failed", "error", err, "attempt_id", attempt.AttemptID)
+								attemptStats.failed++
+								break
+							}
+							recordDeliveryAttemptMetric(registry, attempt)
+							attemptStats.accepted++
+							sent = true
+							break
+						}
+
+						status.Store("last_error", err.Error())
+						logger.Error("connector send failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel, "attempt_number", nextAttemptNumber, "binding_attempt", bindingAttempt, "max_binding_attempts", deliveryPolicy.MaxAttempts, "connector", binding.ConnectorName, "binding_priority", binding.Priority)
+						attempt.Status = notification.DeliveryAttemptFailed
+						attempt.ErrorMessage = err.Error()
+						if err := store.UpdateDeliveryAttempt(messageCtx, attempt); err != nil {
+							logger.Error("update failed delivery attempt failed", "error", err, "attempt_id", attempt.AttemptID)
+						}
+						recordDeliveryAttemptMetric(registry, attempt)
+
+						nextAttemptNumber++
+						if bindingAttempt == deliveryPolicy.MaxAttempts {
+							break
+						}
+
+						if err := sleepWithContext(messageCtx, time.Duration(deliveryPolicy.BackoffSeconds)*time.Second); err != nil {
+							logger.Error("retry backoff interrupted", "error", err, "request_id", plan.Request.RequestID, "channel", channel, "connector", binding.ConnectorName)
+							attemptStats.failed++
+							break
+						}
+					}
+
+					if sent {
+						break
+					}
+					if nextAttemptNumber > totalMaxAttempts {
 						break
 					}
 
-					status.Store("last_error", err.Error())
-					logger.Error("connector send failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel, "attempt_number", attemptNumber, "max_attempts", deliveryPolicy.MaxAttempts)
-					attempt.Status = notification.DeliveryAttemptFailed
-					attempt.ErrorMessage = err.Error()
-					if err := store.UpdateDeliveryAttempt(messageCtx, attempt); err != nil {
-						logger.Error("update failed delivery attempt failed", "error", err, "attempt_id", attempt.AttemptID)
-					}
-
-					if attemptNumber == deliveryPolicy.MaxAttempts {
-						attemptStats.failed++
-						break
-					}
-
-					if err := sleepWithContext(messageCtx, time.Duration(deliveryPolicy.BackoffSeconds)*time.Second); err != nil {
-						logger.Error("retry backoff interrupted", "error", err, "request_id", plan.Request.RequestID, "channel", channel)
-						attemptStats.failed++
-						break
-					}
+					logger.Info("provider binding exhausted, failing over", "request_id", plan.Request.RequestID, "channel", channel, "connector", binding.ConnectorName, "binding_priority", binding.Priority, "next_binding_index", bindingIndex+1)
 				}
 
 				if !sent {
+					attemptStats.failed++
 					continue
 				}
 			}
@@ -389,6 +416,9 @@ func main() {
 				logger.Error("update final notification request status failed", "error", err, "request_id", plan.Request.RequestID)
 				return nil
 			}
+			registry.IncCounter("notification_request_final_status_total", "Final notification request statuses produced by the worker.", map[string]string{
+				"status": string(finalStatus),
+			})
 			if err := notifier.NotifyRequestUpdated(messageCtx, plan.Request.RequestID, map[string]interface{}{"source": "worker"}); err != nil {
 				logger.Error("notify lifecycle webhook failed", "error", err, "request_id", plan.Request.RequestID)
 			}
@@ -406,7 +436,7 @@ func main() {
 		}
 	}()
 
-	err = app.RunHTTPService(cfg, logger, func(mux *http.ServeMux, info serviceinfo.Info) {
+	err = app.RunHTTPService(cfg, logger, registry, func(mux *http.ServeMux, info serviceinfo.Info, _ *metrics.Registry) {
 		mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"service":         info.Name,
@@ -465,6 +495,17 @@ func loadString(status *sync.Map, key string) string {
 		return text
 	}
 	return ""
+}
+
+func recordDeliveryAttemptMetric(registry *metrics.Registry, attempt notification.DeliveryAttempt) {
+	if registry == nil {
+		return
+	}
+	registry.IncCounter("delivery_attempts_total", "Delivery attempt outcomes recorded by the worker.", map[string]string{
+		"channel":   string(attempt.Channel),
+		"connector": attempt.ConnectorName,
+		"status":    string(attempt.Status),
+	})
 }
 
 func resolveChannels(ctx context.Context, store *postgres.Store, record notification.NotificationRecord) ([]notification.Channel, error) {

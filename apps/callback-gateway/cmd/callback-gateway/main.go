@@ -14,6 +14,7 @@ import (
 	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
 	"github.com/your-org/notification-control-plane/libs/core/webhooks"
 	"github.com/your-org/notification-control-plane/libs/observability/logging"
+	"github.com/your-org/notification-control-plane/libs/observability/metrics"
 	"github.com/your-org/notification-control-plane/libs/storage/postgres"
 )
 
@@ -25,6 +26,7 @@ func main() {
 
 	logger := logging.New(cfg.ServiceName)
 	ctx := context.Background()
+	registry := metrics.NewRegistry(cfg.ServiceName)
 
 	store, err := postgres.Open(ctx, config.MustGetEnv("DATABASE_URL"))
 	if err != nil {
@@ -33,7 +35,7 @@ func main() {
 	defer store.Close()
 	notifier := webhooks.NewNotifier(store)
 
-	err = app.RunHTTPService(cfg, logger, func(mux *http.ServeMux, info serviceinfo.Info) {
+	err = app.RunHTTPService(cfg, logger, registry, func(mux *http.ServeMux, info serviceinfo.Info, registry *metrics.Registry) {
 		mux.HandleFunc("POST /v1/providers/", func(w http.ResponseWriter, r *http.Request) {
 			path := strings.TrimPrefix(r.URL.Path, "/v1/providers/")
 			parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -44,20 +46,24 @@ func main() {
 
 			var payload notification.ProviderCallback
 			if err := httpx.DecodeJSON(r, &payload); err != nil {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "invalid_payload"})
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid callback payload"})
 				return
 			}
 			if payload.ProviderMessageID == "" || payload.Status == "" {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "validation_failed"})
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider_message_id and status are required"})
 				return
 			}
 
 			attempt, err := store.GetDeliveryAttemptByProviderMessageID(r.Context(), payload.ProviderMessageID)
 			if errors.Is(err, postgres.ErrNotFound) {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "attempt_not_found"})
 				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "delivery attempt not found for provider_message_id"})
 				return
 			}
 			if err != nil {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "lookup_failed"})
 				logger.Error("load delivery attempt by provider message id failed", "error", err, "provider_message_id", payload.ProviderMessageID)
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load delivery attempt"})
 				return
@@ -66,6 +72,7 @@ func main() {
 			attempt.Status = normalizeAttemptStatus(payload.Status)
 			attempt.ErrorMessage = normalizedErrorMessage(payload)
 			if err := store.UpdateDeliveryAttempt(r.Context(), attempt); err != nil {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "update_attempt_failed"})
 				logger.Error("update delivery attempt from callback failed", "error", err, "attempt_id", attempt.AttemptID)
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "update delivery attempt"})
 				return
@@ -73,11 +80,13 @@ func main() {
 
 			requestStatus, err := recomputeRequestStatus(r.Context(), store, attempt.RequestID)
 			if err != nil {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "recompute_request_failed"})
 				logger.Error("recompute request status failed", "error", err, "request_id", attempt.RequestID)
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "recompute request status"})
 				return
 			}
 			if err := store.UpdateNotificationRequestStatus(r.Context(), attempt.RequestID, requestStatus); err != nil {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "update_request_failed"})
 				logger.Error("update request status from callback failed", "error", err, "request_id", attempt.RequestID)
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "update request status"})
 				return
@@ -86,6 +95,11 @@ func main() {
 				logger.Error("notify lifecycle webhook failed", "error", err, "request_id", attempt.RequestID)
 			}
 
+			registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{
+				"provider":          parts[0],
+				"outcome":           "accepted",
+				"normalized_status": string(attempt.Status),
+			})
 			httpx.WriteJSON(w, http.StatusAccepted, map[string]any{
 				"service":             info.Name,
 				"provider":            parts[0],

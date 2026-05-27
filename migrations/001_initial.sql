@@ -41,7 +41,7 @@ ALTER TABLE delivery_attempts ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT 
 
 CREATE TABLE IF NOT EXISTS provider_bindings (
     binding_id TEXT PRIMARY KEY,
-    channel TEXT NOT NULL UNIQUE,
+    channel TEXT NOT NULL,
     connector_name TEXT NOT NULL,
     endpoint_url TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -50,12 +50,27 @@ CREATE TABLE IF NOT EXISTS provider_bindings (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.table_constraints
+        WHERE table_name = 'provider_bindings'
+          AND constraint_name = 'provider_bindings_channel_key'
+    ) THEN
+        ALTER TABLE provider_bindings DROP CONSTRAINT provider_bindings_channel_key;
+    END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS provider_bindings_channel_connector_name_idx
+    ON provider_bindings(channel, connector_name);
+
 INSERT INTO provider_bindings (binding_id, channel, connector_name, endpoint_url, enabled, priority)
 VALUES
     ('binding-email-default', 'email', 'connector-email', 'http://connector-email:8091', TRUE, 100),
     ('binding-sms-default', 'sms', 'connector-sms', 'http://connector-sms:8092', TRUE, 100),
     ('binding-webhook-default', 'webhook', 'connector-webhook', 'http://connector-webhook:8093', TRUE, 100)
-ON CONFLICT (channel) DO NOTHING;
+ON CONFLICT (channel, connector_name) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS routing_policies (
     policy_id TEXT PRIMARY KEY,
