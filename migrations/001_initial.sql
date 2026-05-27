@@ -121,3 +121,29 @@ VALUES
     ('delivery-policy-sms', 'sms', 3, 1, TRUE),
     ('delivery-policy-webhook', 'webhook', 3, 1, TRUE)
 ON CONFLICT (channel) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+    subscription_id TEXT PRIMARY KEY,
+    target_url TEXT NOT NULL UNIQUE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS webhook_delivery_attempts (
+    delivery_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL REFERENCES notification_requests(request_id) ON DELETE CASCADE,
+    subscription_id TEXT NOT NULL REFERENCES webhook_subscriptions(subscription_id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    target_url TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL DEFAULT 1,
+    max_attempts INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL,
+    http_status_code INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT NOT NULL DEFAULT '',
+    response_body TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS webhook_delivery_attempts_request_id_idx ON webhook_delivery_attempts(request_id);

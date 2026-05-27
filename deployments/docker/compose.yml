@@ -120,6 +120,11 @@ services:
     ports:
       - "8082:8082"
 
+  webhook-sink:
+    image: mendhak/http-https-echo:31
+    ports:
+      - "8087:8080"
+
   connector-email:
     build:
       context: ../..

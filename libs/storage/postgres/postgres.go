@@ -254,6 +254,40 @@ func (s *Store) ListDeliveryAttempts(ctx context.Context, requestID string) ([]n
 	return attempts, nil
 }
 
+func (s *Store) GetDeliveryAttemptByProviderMessageID(ctx context.Context, providerMessageID string) (notification.DeliveryAttempt, error) {
+	const query = `
+		SELECT attempt_id, request_id, channel, connector_name, status, provider_message_id,
+		       destination, error_message, attempt_number, max_attempts, created_at, updated_at
+		FROM delivery_attempts
+		WHERE provider_message_id = $1
+		ORDER BY updated_at DESC
+		LIMIT 1
+	`
+
+	var attempt notification.DeliveryAttempt
+	err := s.db.QueryRowContext(ctx, query, providerMessageID).Scan(
+		&attempt.AttemptID,
+		&attempt.RequestID,
+		&attempt.Channel,
+		&attempt.ConnectorName,
+		&attempt.Status,
+		&attempt.ProviderMessageID,
+		&attempt.Destination,
+		&attempt.ErrorMessage,
+		&attempt.AttemptNumber,
+		&attempt.MaxAttempts,
+		&attempt.CreatedAt,
+		&attempt.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return notification.DeliveryAttempt{}, ErrNotFound
+	}
+	if err != nil {
+		return notification.DeliveryAttempt{}, fmt.Errorf("query delivery attempt by provider message id: %w", err)
+	}
+	return attempt, nil
+}
+
 func (s *Store) UpsertProviderBinding(ctx context.Context, binding notification.ProviderBinding) error {
 	const query = `
 		INSERT INTO provider_bindings (
@@ -718,4 +752,215 @@ func (s *Store) GetDeliveryPolicyByChannel(ctx context.Context, channel notifica
 		return notification.DeliveryPolicy{}, fmt.Errorf("query delivery policy: %w", err)
 	}
 	return policy, nil
+}
+
+func (s *Store) UpsertWebhookSubscription(ctx context.Context, subscription notification.WebhookSubscription) error {
+	const query = `
+		INSERT INTO webhook_subscriptions (
+			subscription_id, target_url, enabled
+		) VALUES ($1, $2, $3)
+		ON CONFLICT (target_url)
+		DO UPDATE SET
+			enabled = EXCLUDED.enabled,
+			updated_at = NOW()
+	`
+
+	_, err := s.db.ExecContext(ctx, query,
+		subscription.SubscriptionID,
+		subscription.TargetURL,
+		subscription.Enabled,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert webhook subscription: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListWebhookSubscriptions(ctx context.Context) ([]notification.WebhookSubscription, error) {
+	const query = `
+		SELECT subscription_id, target_url, enabled, created_at, updated_at
+		FROM webhook_subscriptions
+		ORDER BY created_at ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query webhook subscriptions: %w", err)
+	}
+	defer rows.Close()
+
+	var subscriptions []notification.WebhookSubscription
+	for rows.Next() {
+		var subscription notification.WebhookSubscription
+		if err := rows.Scan(
+			&subscription.SubscriptionID,
+			&subscription.TargetURL,
+			&subscription.Enabled,
+			&subscription.CreatedAt,
+			&subscription.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan webhook subscription: %w", err)
+		}
+		subscriptions = append(subscriptions, subscription)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate webhook subscriptions: %w", err)
+	}
+	return subscriptions, nil
+}
+
+func (s *Store) GetWebhookSubscriptionByID(ctx context.Context, subscriptionID string) (notification.WebhookSubscription, error) {
+	const query = `
+		SELECT subscription_id, target_url, enabled, created_at, updated_at
+		FROM webhook_subscriptions
+		WHERE subscription_id = $1
+		LIMIT 1
+	`
+
+	var subscription notification.WebhookSubscription
+	err := s.db.QueryRowContext(ctx, query, subscriptionID).Scan(
+		&subscription.SubscriptionID,
+		&subscription.TargetURL,
+		&subscription.Enabled,
+		&subscription.CreatedAt,
+		&subscription.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return notification.WebhookSubscription{}, ErrNotFound
+	}
+	if err != nil {
+		return notification.WebhookSubscription{}, fmt.Errorf("query webhook subscription: %w", err)
+	}
+	return subscription, nil
+}
+
+func (s *Store) ListEnabledWebhookSubscriptions(ctx context.Context) ([]notification.WebhookSubscription, error) {
+	const query = `
+		SELECT subscription_id, target_url, enabled, created_at, updated_at
+		FROM webhook_subscriptions
+		WHERE enabled = TRUE
+		ORDER BY created_at ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query enabled webhook subscriptions: %w", err)
+	}
+	defer rows.Close()
+
+	var subscriptions []notification.WebhookSubscription
+	for rows.Next() {
+		var subscription notification.WebhookSubscription
+		if err := rows.Scan(
+			&subscription.SubscriptionID,
+			&subscription.TargetURL,
+			&subscription.Enabled,
+			&subscription.CreatedAt,
+			&subscription.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan enabled webhook subscription: %w", err)
+		}
+		subscriptions = append(subscriptions, subscription)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate enabled webhook subscriptions: %w", err)
+	}
+	return subscriptions, nil
+}
+
+func (s *Store) CreateWebhookDeliveryAttempt(ctx context.Context, attempt notification.WebhookDeliveryAttempt) error {
+	const query = `
+		INSERT INTO webhook_delivery_attempts (
+			delivery_id, request_id, subscription_id, event_type, target_url, attempt_number, max_attempts,
+			status, http_status_code, error_message, response_body
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`
+
+	_, err := s.db.ExecContext(ctx, query,
+		attempt.DeliveryID,
+		attempt.RequestID,
+		attempt.SubscriptionID,
+		attempt.EventType,
+		attempt.TargetURL,
+		attempt.AttemptNumber,
+		attempt.MaxAttempts,
+		attempt.Status,
+		attempt.HTTPStatusCode,
+		attempt.ErrorMessage,
+		attempt.ResponseBody,
+	)
+	if err != nil {
+		return fmt.Errorf("insert webhook delivery attempt: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) UpdateWebhookDeliveryAttempt(ctx context.Context, attempt notification.WebhookDeliveryAttempt) error {
+	const query = `
+		UPDATE webhook_delivery_attempts
+		SET status = $2, http_status_code = $3, error_message = $4, response_body = $5, updated_at = NOW()
+		WHERE delivery_id = $1
+	`
+
+	result, err := s.db.ExecContext(ctx, query,
+		attempt.DeliveryID,
+		attempt.Status,
+		attempt.HTTPStatusCode,
+		attempt.ErrorMessage,
+		attempt.ResponseBody,
+	)
+	if err != nil {
+		return fmt.Errorf("update webhook delivery attempt: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) ListWebhookDeliveryAttempts(ctx context.Context, requestID string) ([]notification.WebhookDeliveryAttempt, error) {
+	const query = `
+		SELECT delivery_id, request_id, subscription_id, event_type, target_url, attempt_number, max_attempts,
+		       status, http_status_code, error_message, response_body, created_at, updated_at
+		FROM webhook_delivery_attempts
+		WHERE request_id = $1
+		ORDER BY created_at ASC, attempt_number ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("query webhook delivery attempts: %w", err)
+	}
+	defer rows.Close()
+
+	var attempts []notification.WebhookDeliveryAttempt
+	for rows.Next() {
+		var attempt notification.WebhookDeliveryAttempt
+		if err := rows.Scan(
+			&attempt.DeliveryID,
+			&attempt.RequestID,
+			&attempt.SubscriptionID,
+			&attempt.EventType,
+			&attempt.TargetURL,
+			&attempt.AttemptNumber,
+			&attempt.MaxAttempts,
+			&attempt.Status,
+			&attempt.HTTPStatusCode,
+			&attempt.ErrorMessage,
+			&attempt.ResponseBody,
+			&attempt.CreatedAt,
+			&attempt.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan webhook delivery attempt: %w", err)
+		}
+		attempts = append(attempts, attempt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate webhook delivery attempts: %w", err)
+	}
+	return attempts, nil
 }

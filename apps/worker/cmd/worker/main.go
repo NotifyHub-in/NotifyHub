@@ -18,6 +18,7 @@ import (
 	"github.com/your-org/notification-control-plane/libs/core/id"
 	"github.com/your-org/notification-control-plane/libs/core/render"
 	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
+	"github.com/your-org/notification-control-plane/libs/core/webhooks"
 	kafkamq "github.com/your-org/notification-control-plane/libs/messaging/kafka"
 	"github.com/your-org/notification-control-plane/libs/observability/logging"
 	"github.com/your-org/notification-control-plane/libs/storage/postgres"
@@ -75,6 +76,7 @@ func main() {
 		panic(err)
 	}
 	defer store.Close()
+	notifier := webhooks.NewNotifier(store)
 
 	brokers := config.MustGetEnv("KAFKA_BROKERS")
 	topic := config.GetEnv("KAFKA_NOTIFICATION_TOPIC", "notification.requests")
@@ -387,6 +389,9 @@ func main() {
 				logger.Error("update final notification request status failed", "error", err, "request_id", plan.Request.RequestID)
 				return nil
 			}
+			if err := notifier.NotifyRequestUpdated(messageCtx, plan.Request.RequestID, map[string]interface{}{"source": "worker"}); err != nil {
+				logger.Error("notify lifecycle webhook failed", "error", err, "request_id", plan.Request.RequestID)
+			}
 
 			status.Store("state", "idle")
 			status.Store("last_heartbeat", time.Now().UTC().Format(time.RFC3339))
@@ -405,7 +410,7 @@ func main() {
 		mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"service":         info.Name,
-				"phase":           "delivery-policies",
+				"phase":           "lifecycle-webhooks",
 				"state":           loadString(&status, "state"),
 				"last_request_id": loadString(&status, "last_request_id"),
 				"last_heartbeat":  loadString(&status, "last_heartbeat"),

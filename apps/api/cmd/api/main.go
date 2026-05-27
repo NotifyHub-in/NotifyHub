@@ -13,6 +13,7 @@ import (
 	"github.com/your-org/notification-control-plane/libs/core/id"
 	"github.com/your-org/notification-control-plane/libs/core/render"
 	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
+	"github.com/your-org/notification-control-plane/libs/core/webhooks"
 	kafkamq "github.com/your-org/notification-control-plane/libs/messaging/kafka"
 	"github.com/your-org/notification-control-plane/libs/observability/logging"
 	"github.com/your-org/notification-control-plane/libs/storage/postgres"
@@ -32,6 +33,7 @@ func main() {
 		panic(err)
 	}
 	defer store.Close()
+	notifier := webhooks.NewNotifier(store)
 
 	brokers := config.MustGetEnv("KAFKA_BROKERS")
 	topic := config.GetEnv("KAFKA_NOTIFICATION_TOPIC", "notification.requests")
@@ -81,6 +83,10 @@ func main() {
 				_ = store.UpdateNotificationRequestStatus(r.Context(), record.RequestID, notification.RequestStatusFailed)
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "enqueue notification request"})
 				return
+			}
+
+			if err := notifier.NotifyRequestUpdated(r.Context(), record.RequestID, map[string]interface{}{"source": "api"}); err != nil {
+				logger.Error("notify accepted lifecycle webhook failed", "error", err, "request_id", record.RequestID)
 			}
 
 			httpx.WriteJSON(w, http.StatusAccepted, notification.NotificationAccepted{
@@ -409,6 +415,68 @@ func main() {
 			httpx.WriteJSON(w, http.StatusOK, saved)
 		})
 
+		mux.HandleFunc("GET /v1/webhook-subscriptions", func(w http.ResponseWriter, r *http.Request) {
+			subscriptions, err := store.ListWebhookSubscriptions(r.Context())
+			if err != nil {
+				logger.Error("list webhook subscriptions failed", "error", err)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load webhook subscriptions"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"webhook_subscriptions": subscriptions})
+		})
+
+		mux.HandleFunc("GET /v1/webhook-subscriptions/{subscriptionID}", func(w http.ResponseWriter, r *http.Request) {
+			subscriptionID := r.PathValue("subscriptionID")
+			subscription, err := store.GetWebhookSubscriptionByID(r.Context(), subscriptionID)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "webhook subscription not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("get webhook subscription failed", "error", err, "subscription_id", subscriptionID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load webhook subscription"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, subscription)
+		})
+
+		mux.HandleFunc("POST /v1/webhook-subscriptions", func(w http.ResponseWriter, r *http.Request) {
+			var req notification.WebhookSubscriptionUpsertRequest
+			if err := httpx.DecodeJSON(r, &req); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid webhook subscription payload"})
+				return
+			}
+			if req.TargetURL == "" {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target_url is required"})
+				return
+			}
+
+			subscription := notification.WebhookSubscription{
+				SubscriptionID: id.New(12),
+				TargetURL:      req.TargetURL,
+				Enabled:        req.Enabled,
+			}
+			if err := store.UpsertWebhookSubscription(r.Context(), subscription); err != nil {
+				logger.Error("upsert webhook subscription failed", "error", err, "target_url", req.TargetURL)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save webhook subscription"})
+				return
+			}
+
+			subscriptions, err := store.ListWebhookSubscriptions(r.Context())
+			if err != nil {
+				logger.Error("list webhook subscriptions after upsert failed", "error", err)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload webhook subscriptions"})
+				return
+			}
+			for _, saved := range subscriptions {
+				if saved.TargetURL == req.TargetURL {
+					httpx.WriteJSON(w, http.StatusOK, saved)
+					return
+				}
+			}
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload webhook subscription"})
+		})
+
 		mux.HandleFunc("GET /v1/notification-requests/{requestID}", func(w http.ResponseWriter, r *http.Request) {
 			requestID := r.PathValue("requestID")
 			record, err := store.GetNotificationRequest(r.Context(), requestID)
@@ -429,17 +497,25 @@ func main() {
 				return
 			}
 
+			webhookAttempts, err := store.ListWebhookDeliveryAttempts(r.Context(), requestID)
+			if err != nil {
+				logger.Error("list webhook delivery attempts failed", "error", err, "request_id", requestID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load webhook delivery attempts"})
+				return
+			}
+
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"request":           record,
-				"delivery_attempts": attempts,
+				"request":                   record,
+				"delivery_attempts":         attempts,
+				"webhook_delivery_attempts": webhookAttempts,
 			})
 		})
 
 		mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"service": info.Name,
-				"phase":   "delivery-policies",
-				"state":   "api persists requests, provider bindings, routing policies, preference policies, templates, and delivery policies",
+				"phase":   "webhook-delivery-tracking",
+				"state":   "api persists requests, provider bindings, routing policies, preference policies, templates, delivery policies, webhook subscriptions, and webhook delivery attempts",
 				"topic":   topic,
 			})
 		})

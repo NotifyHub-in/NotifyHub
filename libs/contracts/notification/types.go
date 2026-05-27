@@ -18,6 +18,7 @@ const (
 	RequestStatusAccepted    RequestStatus = "accepted"
 	RequestStatusProcessing  RequestStatus = "processing"
 	RequestStatusDispatched  RequestStatus = "dispatched"
+	RequestStatusDelivered   RequestStatus = "delivered"
 	RequestStatusFailed      RequestStatus = "failed"
 	RequestStatusSuppressed  RequestStatus = "suppressed"
 	RequestStatusUnsupported RequestStatus = "unsupported"
@@ -28,6 +29,7 @@ type DeliveryAttemptStatus string
 const (
 	DeliveryAttemptPending     DeliveryAttemptStatus = "pending"
 	DeliveryAttemptAccepted    DeliveryAttemptStatus = "accepted"
+	DeliveryAttemptDelivered   DeliveryAttemptStatus = "delivered"
 	DeliveryAttemptFailed      DeliveryAttemptStatus = "failed"
 	DeliveryAttemptSuppressed  DeliveryAttemptStatus = "suppressed"
 	DeliveryAttemptUnsupported DeliveryAttemptStatus = "unsupported"
@@ -201,4 +203,58 @@ type ConnectorSendResponse struct {
 type ConnectorCapabilities struct {
 	Name     string    `json:"name"`
 	Channels []Channel `json:"channels"`
+}
+
+type ProviderCallback struct {
+	ProviderMessageID string            `json:"provider_message_id"`
+	Status            string            `json:"status"`
+	ErrorCode         string            `json:"error_code,omitempty"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
+}
+
+type WebhookSubscription struct {
+	SubscriptionID string    `json:"subscription_id"`
+	TargetURL      string    `json:"target_url"`
+	Enabled        bool      `json:"enabled"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type WebhookSubscriptionUpsertRequest struct {
+	TargetURL string `json:"target_url"`
+	Enabled   bool   `json:"enabled"`
+}
+
+type LifecycleWebhookEvent struct {
+	EventType string                 `json:"event_type"`
+	RequestID string                 `json:"request_id"`
+	Status    RequestStatus          `json:"status"`
+	Request   NotificationRecord     `json:"request"`
+	Attempts  []DeliveryAttempt      `json:"attempts"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	SentAt    time.Time              `json:"sent_at"`
+}
+
+type WebhookDeliveryAttemptStatus string
+
+const (
+	WebhookDeliveryAttemptPending   WebhookDeliveryAttemptStatus = "pending"
+	WebhookDeliveryAttemptSucceeded WebhookDeliveryAttemptStatus = "succeeded"
+	WebhookDeliveryAttemptFailed    WebhookDeliveryAttemptStatus = "failed"
+)
+
+type WebhookDeliveryAttempt struct {
+	DeliveryID     string                       `json:"delivery_id"`
+	RequestID      string                       `json:"request_id"`
+	SubscriptionID string                       `json:"subscription_id"`
+	EventType      string                       `json:"event_type"`
+	TargetURL      string                       `json:"target_url"`
+	AttemptNumber  int                          `json:"attempt_number"`
+	MaxAttempts    int                          `json:"max_attempts"`
+	Status         WebhookDeliveryAttemptStatus `json:"status"`
+	HTTPStatusCode int                          `json:"http_status_code,omitempty"`
+	ErrorMessage   string                       `json:"error_message,omitempty"`
+	ResponseBody   string                       `json:"response_body,omitempty"`
+	CreatedAt      time.Time                    `json:"created_at"`
+	UpdatedAt      time.Time                    `json:"updated_at"`
 }
