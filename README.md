@@ -14,6 +14,8 @@ This is the initial implementation scaffold. It includes:
 - Dockerfiles and a local `docker compose` stack
 - a shared Go module and common packages for config, HTTP helpers, and service metadata
 
+For the current build log and production-readiness checklist, see [docs/project-status.md](/Users/Shaik/notifications/notification-control-plane/docs/project-status.md).
+
 ## Repo layout
 
 ```text

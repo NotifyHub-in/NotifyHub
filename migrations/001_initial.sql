@@ -9,15 +9,20 @@ CREATE TABLE IF NOT EXISTS notification_requests (
     event_name TEXT NOT NULL,
     template_key TEXT NOT NULL,
     channels JSONB NOT NULL,
+    binding_set TEXT NOT NULL DEFAULT '',
     recipient JSONB NOT NULL,
     variables JSONB NOT NULL DEFAULT '{}'::jsonb,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     priority TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL,
     requested_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE notification_requests ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ NULL;
+ALTER TABLE notification_requests ADD COLUMN IF NOT EXISTS binding_set TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS delivery_attempts (
     attempt_id TEXT PRIMARY KEY,
@@ -42,6 +47,7 @@ ALTER TABLE delivery_attempts ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT 
 CREATE TABLE IF NOT EXISTS provider_bindings (
     binding_id TEXT PRIMARY KEY,
     channel TEXT NOT NULL,
+    binding_set TEXT NOT NULL DEFAULT '',
     connector_name TEXT NOT NULL,
     endpoint_url TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -62,31 +68,36 @@ BEGIN
     END IF;
 END $$;
 
-CREATE UNIQUE INDEX IF NOT EXISTS provider_bindings_channel_connector_name_idx
-    ON provider_bindings(channel, connector_name);
+DROP INDEX IF EXISTS provider_bindings_channel_connector_name_idx;
 
-INSERT INTO provider_bindings (binding_id, channel, connector_name, endpoint_url, enabled, priority)
+CREATE UNIQUE INDEX IF NOT EXISTS provider_bindings_channel_connector_name_idx
+    ON provider_bindings(channel, binding_set, connector_name);
+
+INSERT INTO provider_bindings (binding_id, channel, binding_set, connector_name, endpoint_url, enabled, priority)
 VALUES
-    ('binding-email-default', 'email', 'connector-email', 'http://connector-email:8091', TRUE, 100),
-    ('binding-sms-default', 'sms', 'connector-sms', 'http://connector-sms:8092', TRUE, 100),
-    ('binding-webhook-default', 'webhook', 'connector-webhook', 'http://connector-webhook:8093', TRUE, 100)
-ON CONFLICT (channel, connector_name) DO NOTHING;
+    ('binding-email-default', 'email', '', 'connector-email', 'http://connector-email:8091', TRUE, 100),
+    ('binding-sms-default', 'sms', '', 'connector-sms', 'http://connector-sms:8092', TRUE, 100),
+    ('binding-webhook-default', 'webhook', '', 'connector-webhook', 'http://connector-webhook:8093', TRUE, 100)
+ON CONFLICT (channel, binding_set, connector_name) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS routing_policies (
     policy_id TEXT PRIMARY KEY,
     event_name TEXT NOT NULL UNIQUE,
     channels JSONB NOT NULL,
+    binding_set TEXT NOT NULL DEFAULT '',
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     priority INTEGER NOT NULL DEFAULT 100,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-INSERT INTO routing_policies (policy_id, event_name, channels, enabled, priority)
+ALTER TABLE routing_policies ADD COLUMN IF NOT EXISTS binding_set TEXT NOT NULL DEFAULT '';
+
+INSERT INTO routing_policies (policy_id, event_name, channels, binding_set, enabled, priority)
 VALUES
-    ('policy-order-delayed', 'order.delayed', '["email"]'::jsonb, TRUE, 100),
-    ('policy-otp-requested', 'otp.requested', '["sms"]'::jsonb, TRUE, 100),
-    ('policy-payment-failed', 'payment.failed', '["webhook"]'::jsonb, TRUE, 100)
+    ('policy-order-delayed', 'order.delayed', '["email"]'::jsonb, '', TRUE, 100),
+    ('policy-otp-requested', 'otp.requested', '["sms"]'::jsonb, '', TRUE, 100),
+    ('policy-payment-failed', 'payment.failed', '["webhook"]'::jsonb, '', TRUE, 100)
 ON CONFLICT (event_name) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS preference_policies (

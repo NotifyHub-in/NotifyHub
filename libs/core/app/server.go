@@ -11,6 +11,7 @@ import (
 	"github.com/your-org/notification-control-plane/libs/core/httpx"
 	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
 	"github.com/your-org/notification-control-plane/libs/observability/metrics"
+	obsruntime "github.com/your-org/notification-control-plane/libs/observability/runtime"
 )
 
 type RouteRegistrar func(mux *http.ServeMux, info serviceinfo.Info, registry *metrics.Registry)
@@ -24,6 +25,7 @@ func RunHTTPService(cfg config.HTTPServiceConfig, logger *slog.Logger, registry 
 	if registry == nil {
 		registry = metrics.NewRegistry(cfg.ServiceName)
 	}
+	obsruntime.Register(registry, time.Now().UTC())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -78,7 +80,7 @@ func observabilityMiddleware(logger *slog.Logger, registry *metrics.Registry, ne
 			"status":  fmt.Sprintf("%d", recorder.statusCode),
 		}
 		registry.IncCounter("http_requests_total", "Total HTTP requests handled.", labels)
-		registry.ObserveSummary("http_request_duration_seconds", "HTTP request duration in seconds.", labels, time.Since(start).Seconds())
+		registry.ObserveHistogram("http_request_duration_seconds", "HTTP request duration in seconds.", labels, metrics.DefaultLatencyBuckets(), time.Since(start).Seconds())
 
 		logger.Info("request completed", "method", r.Method, "path", r.URL.Path, "pattern", pattern, "status", recorder.statusCode, "duration", time.Since(start))
 	})

@@ -36,6 +36,7 @@ func main() {
 		panic(err)
 	}
 	defer store.Close()
+	postgres.AttachMetrics(registry)
 	notifier := webhooks.NewNotifier(store)
 
 	brokers := config.MustGetEnv("KAFKA_BROKERS")
@@ -63,18 +64,25 @@ func main() {
 			}
 
 			now := time.Now().UTC()
+			if req.ExpiresAt != nil && !req.ExpiresAt.After(now) {
+				registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "validation_failed"})
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "expires_at must be in the future"})
+				return
+			}
 			record := notification.NotificationRecord{
 				RequestID:      id.New(12),
 				IdempotencyKey: req.IdempotencyKey,
 				EventName:      req.EventName,
 				TemplateKey:    req.TemplateKey,
 				Channels:       req.Channels,
+				BindingSet:     req.BindingSet,
 				Recipient:      req.Recipient,
 				Variables:      req.Variables,
 				Metadata:       req.Metadata,
 				Priority:       req.Priority,
 				Status:         notification.RequestStatusAccepted,
 				RequestedAt:    now,
+				ExpiresAt:      req.ExpiresAt,
 			}
 
 			if err := store.CreateNotificationRequest(r.Context(), record); err != nil {
@@ -165,7 +173,8 @@ func main() {
 
 		mux.HandleFunc("GET /v1/provider-bindings/{channel}", func(w http.ResponseWriter, r *http.Request) {
 			channel := notification.Channel(r.PathValue("channel"))
-			bindings, err := store.ListProviderBindingsByChannel(r.Context(), channel)
+			bindingSet := r.URL.Query().Get("binding_set")
+			bindings, err := store.ListProviderBindingsByChannel(r.Context(), channel, bindingSet)
 			if errors.Is(err, postgres.ErrNotFound) {
 				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "provider binding not found"})
 				return
@@ -177,6 +186,7 @@ func main() {
 			}
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"channel":           channel,
+				"binding_set":       bindingSet,
 				"provider_bindings": bindings,
 			})
 		})
@@ -195,6 +205,7 @@ func main() {
 			binding := notification.ProviderBinding{
 				BindingID:     id.New(12),
 				Channel:       req.Channel,
+				BindingSet:    req.BindingSet,
 				ConnectorName: req.ConnectorName,
 				EndpointURL:   req.EndpointURL,
 				Enabled:       req.Enabled,
@@ -206,9 +217,9 @@ func main() {
 				return
 			}
 
-			saved, err := store.GetProviderBindingByChannel(r.Context(), req.Channel)
+			saved, err := store.GetProviderBindingByChannel(r.Context(), req.Channel, req.BindingSet)
 			if err != nil {
-				logger.Error("reload provider binding failed", "error", err, "channel", req.Channel)
+				logger.Error("reload provider binding failed", "error", err, "channel", req.Channel, "binding_set", req.BindingSet)
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload provider binding"})
 				return
 			}
@@ -252,11 +263,12 @@ func main() {
 			}
 
 			policy := notification.RoutingPolicy{
-				PolicyID:  id.New(12),
-				EventName: req.EventName,
-				Channels:  req.Channels,
-				Enabled:   req.Enabled,
-				Priority:  req.Priority,
+				PolicyID:   id.New(12),
+				EventName:  req.EventName,
+				Channels:   req.Channels,
+				BindingSet: req.BindingSet,
+				Enabled:    req.Enabled,
+				Priority:   req.Priority,
 			}
 			if err := store.UpsertRoutingPolicy(r.Context(), policy); err != nil {
 				logger.Error("upsert routing policy failed", "error", err, "event_name", req.EventName)
@@ -572,8 +584,21 @@ func sameNotificationIntent(existing notification.NotificationRecord, incoming n
 	return existing.EventName == incoming.EventName &&
 		existing.TemplateKey == incoming.TemplateKey &&
 		reflect.DeepEqual(existing.Channels, incoming.Channels) &&
+		existing.BindingSet == incoming.BindingSet &&
 		reflect.DeepEqual(existing.Recipient, incoming.Recipient) &&
 		reflect.DeepEqual(existing.Variables, incoming.Variables) &&
 		reflect.DeepEqual(existing.Metadata, incoming.Metadata) &&
-		existing.Priority == incoming.Priority
+		existing.Priority == incoming.Priority &&
+		timesEqual(existing.ExpiresAt, incoming.ExpiresAt)
+}
+
+func timesEqual(existing *time.Time, incoming *time.Time) bool {
+	switch {
+	case existing == nil && incoming == nil:
+		return true
+	case existing == nil || incoming == nil:
+		return false
+	default:
+		return existing.Equal(*incoming)
+	}
 }

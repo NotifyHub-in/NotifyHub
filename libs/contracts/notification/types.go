@@ -19,6 +19,7 @@ const (
 	RequestStatusProcessing  RequestStatus = "processing"
 	RequestStatusDispatched  RequestStatus = "dispatched"
 	RequestStatusDelivered   RequestStatus = "delivered"
+	RequestStatusExpired     RequestStatus = "expired"
 	RequestStatusFailed      RequestStatus = "failed"
 	RequestStatusSuppressed  RequestStatus = "suppressed"
 	RequestStatusUnsupported RequestStatus = "unsupported"
@@ -30,6 +31,7 @@ const (
 	DeliveryAttemptPending     DeliveryAttemptStatus = "pending"
 	DeliveryAttemptAccepted    DeliveryAttemptStatus = "accepted"
 	DeliveryAttemptDelivered   DeliveryAttemptStatus = "delivered"
+	DeliveryAttemptExpired     DeliveryAttemptStatus = "expired"
 	DeliveryAttemptFailed      DeliveryAttemptStatus = "failed"
 	DeliveryAttemptSuppressed  DeliveryAttemptStatus = "suppressed"
 	DeliveryAttemptUnsupported DeliveryAttemptStatus = "unsupported"
@@ -49,11 +51,13 @@ type NotificationRequest struct {
 	EventName      string            `json:"event_name"`
 	TemplateKey    string            `json:"template_key"`
 	Channels       []Channel         `json:"channels"`
+	BindingSet     string            `json:"binding_set,omitempty"`
 	Recipient      Recipient         `json:"recipient"`
 	Variables      map[string]string `json:"variables,omitempty"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
 	Priority       string            `json:"priority,omitempty"`
 	RequestedAt    time.Time         `json:"requested_at,omitempty"`
+	ExpiresAt      *time.Time        `json:"expires_at,omitempty"`
 }
 
 type NotificationAccepted struct {
@@ -69,12 +73,14 @@ type NotificationRecord struct {
 	EventName      string            `json:"event_name"`
 	TemplateKey    string            `json:"template_key"`
 	Channels       []Channel         `json:"channels"`
+	BindingSet     string            `json:"binding_set,omitempty"`
 	Recipient      Recipient         `json:"recipient"`
 	Variables      map[string]string `json:"variables,omitempty"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
 	Priority       string            `json:"priority,omitempty"`
 	Status         RequestStatus     `json:"status"`
 	RequestedAt    time.Time         `json:"requested_at"`
+	ExpiresAt      *time.Time        `json:"expires_at,omitempty"`
 	CreatedAt      time.Time         `json:"created_at"`
 	UpdatedAt      time.Time         `json:"updated_at"`
 }
@@ -101,6 +107,7 @@ type DeliveryPlan struct {
 type ProviderBinding struct {
 	BindingID     string    `json:"binding_id"`
 	Channel       Channel   `json:"channel"`
+	BindingSet    string    `json:"binding_set,omitempty"`
 	ConnectorName string    `json:"connector_name"`
 	EndpointURL   string    `json:"endpoint_url"`
 	Enabled       bool      `json:"enabled"`
@@ -111,6 +118,7 @@ type ProviderBinding struct {
 
 type ProviderBindingUpsertRequest struct {
 	Channel       Channel `json:"channel"`
+	BindingSet    string  `json:"binding_set,omitempty"`
 	ConnectorName string  `json:"connector_name"`
 	EndpointURL   string  `json:"endpoint_url"`
 	Enabled       bool    `json:"enabled"`
@@ -118,20 +126,22 @@ type ProviderBindingUpsertRequest struct {
 }
 
 type RoutingPolicy struct {
-	PolicyID  string    `json:"policy_id"`
-	EventName string    `json:"event_name"`
-	Channels  []Channel `json:"channels"`
-	Enabled   bool      `json:"enabled"`
-	Priority  int       `json:"priority"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	PolicyID   string    `json:"policy_id"`
+	EventName  string    `json:"event_name"`
+	Channels   []Channel `json:"channels"`
+	BindingSet string    `json:"binding_set,omitempty"`
+	Enabled    bool      `json:"enabled"`
+	Priority   int       `json:"priority"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type RoutingPolicyUpsertRequest struct {
-	EventName string    `json:"event_name"`
-	Channels  []Channel `json:"channels"`
-	Enabled   bool      `json:"enabled"`
-	Priority  int       `json:"priority"`
+	EventName  string    `json:"event_name"`
+	Channels   []Channel `json:"channels"`
+	BindingSet string    `json:"binding_set,omitempty"`
+	Enabled    bool      `json:"enabled"`
+	Priority   int       `json:"priority"`
 }
 
 type PreferencePolicy struct {

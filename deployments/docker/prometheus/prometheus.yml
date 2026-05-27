@@ -1,0 +1,33 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: notification-control-plane
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - api:8080
+          - worker:8081
+          - callback-gateway:8082
+          - connector-email:8091
+          - connector-sms:8092
+          - connector-webhook:8093
+
+  - job_name: cadvisor
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - cadvisor:8080
+
+  - job_name: postgres-exporter
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - postgres-exporter:9187
+
+  - job_name: kafka-exporter
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - kafka-exporter:9308

@@ -78,6 +78,7 @@ func main() {
 		panic(err)
 	}
 	defer store.Close()
+	postgres.AttachMetrics(registry)
 	notifier := webhooks.NewNotifier(store)
 
 	brokers := config.MustGetEnv("KAFKA_BROKERS")
@@ -109,7 +110,51 @@ func main() {
 			status.Store("last_request_id", plan.Request.RequestID)
 			status.Store("last_heartbeat", time.Now().UTC().Format(time.RFC3339))
 
-			effectiveChannels, err := resolveChannels(messageCtx, store, plan.Request)
+			if isExpired(plan.Request, time.Now().UTC()) {
+				expiredChannels := plan.Request.Channels
+				for _, channel := range expiredChannels {
+					attempt := notification.DeliveryAttempt{
+						AttemptID:     id.New(12),
+						RequestID:     plan.Request.RequestID,
+						AttemptNumber: 1,
+						MaxAttempts:   1,
+						Channel:       channel,
+						ConnectorName: connectorName(channel),
+						Status:        notification.DeliveryAttemptExpired,
+						Destination:   destination(plan.Request, channel),
+						ErrorMessage:  "notification request expired before delivery",
+					}
+					if err := store.CreateDeliveryAttempt(messageCtx, attempt); err != nil {
+						logger.Error("create expired delivery attempt failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel)
+						continue
+					}
+					recordDeliveryAttemptMetric(registry, attempt)
+				}
+
+				if err := store.UpdateNotificationRequestStatus(messageCtx, plan.Request.RequestID, notification.RequestStatusExpired); err != nil {
+					status.Store("last_error", err.Error())
+					logger.Error("update expired notification request status failed", "error", err, "request_id", plan.Request.RequestID)
+					return nil
+				}
+				registry.IncCounter("notification_request_final_status_total", "Final notification request statuses produced by the worker.", map[string]string{
+					"status": string(notification.RequestStatusExpired),
+				})
+				registry.ObserveHistogram("notification_end_to_end_seconds", "End-to-end notification latency in seconds from API acceptance to observed terminal or dispatched state.", map[string]string{
+					"stage":        "worker",
+					"final_status": string(notification.RequestStatusExpired),
+				}, metrics.DefaultLatencyBuckets(), time.Since(plan.Request.RequestedAt).Seconds())
+				if err := notifier.NotifyRequestUpdated(messageCtx, plan.Request.RequestID, map[string]interface{}{"source": "worker"}); err != nil {
+					logger.Error("notify lifecycle webhook failed", "error", err, "request_id", plan.Request.RequestID)
+				}
+
+				status.Store("state", "idle")
+				status.Store("last_heartbeat", time.Now().UTC().Format(time.RFC3339))
+				status.Store("last_error", "")
+				logger.Info("skipped expired delivery plan", "request_id", plan.Request.RequestID)
+				return nil
+			}
+
+			effectiveRoute, err := resolveRoute(messageCtx, store, plan.Request)
 			if err != nil {
 				status.Store("last_error", err.Error())
 				logger.Error("resolve routing policy channels failed", "error", err, "request_id", plan.Request.RequestID)
@@ -123,7 +168,7 @@ func main() {
 				return nil
 			}
 
-			allowedChannels, suppressedChannels, err := resolvePreferredChannels(messageCtx, store, plan.Request, effectiveChannels)
+			allowedChannels, suppressedChannels, err := resolvePreferredChannels(messageCtx, store, plan.Request, effectiveRoute.Channels)
 			if err != nil {
 				status.Store("last_error", err.Error())
 				logger.Error("resolve preference policy channels failed", "error", err, "request_id", plan.Request.RequestID)
@@ -279,7 +324,7 @@ func main() {
 					continue
 				}
 
-				bindings, err := store.ListProviderBindingsByChannel(messageCtx, channel)
+				bindings, err := store.ListProviderBindingsByChannel(messageCtx, channel, effectiveRoute.BindingSet)
 				if errors.Is(err, postgres.ErrNotFound) {
 					attempt := notification.DeliveryAttempt{
 						AttemptID:     id.New(12),
@@ -386,6 +431,7 @@ func main() {
 						if bindingAttempt == deliveryPolicy.MaxAttempts {
 							break
 						}
+						recordRetryMetric(registry, channel, binding.ConnectorName)
 
 						if err := sleepWithContext(messageCtx, time.Duration(deliveryPolicy.BackoffSeconds)*time.Second); err != nil {
 							logger.Error("retry backoff interrupted", "error", err, "request_id", plan.Request.RequestID, "channel", channel, "connector", binding.ConnectorName)
@@ -401,6 +447,10 @@ func main() {
 						break
 					}
 
+					if bindingIndex+1 >= len(bindings) {
+						break
+					}
+					recordFailoverMetric(registry, channel, binding.ConnectorName, bindings[bindingIndex+1].ConnectorName)
 					logger.Info("provider binding exhausted, failing over", "request_id", plan.Request.RequestID, "channel", channel, "connector", binding.ConnectorName, "binding_priority", binding.Priority, "next_binding_index", bindingIndex+1)
 				}
 
@@ -419,6 +469,10 @@ func main() {
 			registry.IncCounter("notification_request_final_status_total", "Final notification request statuses produced by the worker.", map[string]string{
 				"status": string(finalStatus),
 			})
+			registry.ObserveHistogram("notification_end_to_end_seconds", "End-to-end notification latency in seconds from API acceptance to observed terminal or dispatched state.", map[string]string{
+				"stage":        "worker",
+				"final_status": string(finalStatus),
+			}, metrics.DefaultLatencyBuckets(), time.Since(plan.Request.RequestedAt).Seconds())
 			if err := notifier.NotifyRequestUpdated(messageCtx, plan.Request.RequestID, map[string]interface{}{"source": "worker"}); err != nil {
 				logger.Error("notify lifecycle webhook failed", "error", err, "request_id", plan.Request.RequestID)
 			}
@@ -508,19 +562,46 @@ func recordDeliveryAttemptMetric(registry *metrics.Registry, attempt notificatio
 	})
 }
 
-func resolveChannels(ctx context.Context, store *postgres.Store, record notification.NotificationRecord) ([]notification.Channel, error) {
+func recordRetryMetric(registry *metrics.Registry, channel notification.Channel, connector string) {
+	if registry == nil {
+		return
+	}
+	registry.IncCounter("delivery_retries_total", "Delivery retry attempts scheduled by the worker.", map[string]string{
+		"channel":   string(channel),
+		"connector": connector,
+	})
+}
+
+func recordFailoverMetric(registry *metrics.Registry, channel notification.Channel, fromConnector string, toConnector string) {
+	if registry == nil {
+		return
+	}
+	registry.IncCounter("provider_failovers_total", "Provider failover transitions executed by the worker.", map[string]string{
+		"channel":        string(channel),
+		"from_connector": fromConnector,
+		"to_connector":   toConnector,
+	})
+}
+
+func resolveRoute(ctx context.Context, store *postgres.Store, record notification.NotificationRecord) (resolvedRoute, error) {
 	if len(record.Channels) > 0 {
-		return record.Channels, nil
+		return resolvedRoute{
+			Channels:   record.Channels,
+			BindingSet: record.BindingSet,
+		}, nil
 	}
 
 	policy, err := store.GetRoutingPolicyByEventName(ctx, record.EventName)
 	if err == postgres.ErrNotFound {
-		return nil, fmt.Errorf("no channels requested and no routing policy for event %s", record.EventName)
+		return resolvedRoute{}, fmt.Errorf("no channels requested and no routing policy for event %s", record.EventName)
 	}
 	if err != nil {
-		return nil, err
+		return resolvedRoute{}, err
 	}
-	return policy.Channels, nil
+	return resolvedRoute{
+		Channels:   policy.Channels,
+		BindingSet: policy.BindingSet,
+	}, nil
 }
 
 func resolvePreferredChannels(ctx context.Context, store *postgres.Store, record notification.NotificationRecord, channels []notification.Channel) ([]notification.Channel, []notification.Channel, error) {
@@ -594,11 +675,20 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
+func isExpired(record notification.NotificationRecord, now time.Time) bool {
+	return record.ExpiresAt != nil && !record.ExpiresAt.After(now)
+}
+
 type deliveryStats struct {
 	accepted    int
 	failed      int
 	suppressed  int
 	unsupported int
+}
+
+type resolvedRoute struct {
+	Channels   []notification.Channel
+	BindingSet string
 }
 
 func (s deliveryStats) finalStatus() notification.RequestStatus {

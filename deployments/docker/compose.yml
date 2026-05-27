@@ -57,6 +57,76 @@ services:
     ports:
       - "8086:8080"
 
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    depends_on:
+      api:
+        condition: service_started
+      worker:
+        condition: service_started
+      callback-gateway:
+        condition: service_started
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    depends_on:
+      prometheus:
+        condition: service_started
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    privileged: true
+    command:
+      - "--docker_only=true"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    ports:
+      - "8088:8080"
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATA_SOURCE_NAME: postgresql://postgres:postgres@postgres:5432/notification_control_plane?sslmode=disable
+    ports:
+      - "9187:9187"
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.8.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command:
+      - "--kafka.server=kafka:9092"
+      - "--group.filter=notification-worker"
+      - "--topic.filter=notification.requests"
+    ports:
+      - "9308:9308"
+
   api:
     build:
       context: ../..
@@ -160,3 +230,5 @@ services:
 
 volumes:
   postgres_data:
+  prometheus_data:
+  grafana_data:

@@ -33,6 +33,7 @@ func main() {
 		panic(err)
 	}
 	defer store.Close()
+	postgres.AttachMetrics(registry)
 	notifier := webhooks.NewNotifier(store)
 
 	err = app.RunHTTPService(cfg, logger, registry, func(mux *http.ServeMux, info serviceinfo.Info, registry *metrics.Registry) {
@@ -91,9 +92,23 @@ func main() {
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "update request status"})
 				return
 			}
+			record, err := store.GetNotificationRequest(r.Context(), attempt.RequestID)
+			if err == nil {
+				registry.ObserveHistogram("notification_end_to_end_seconds", "End-to-end notification latency in seconds from API acceptance to observed terminal or dispatched state.", map[string]string{
+					"stage":        "callback",
+					"final_status": string(requestStatus),
+					"provider":     parts[0],
+				}, metrics.DefaultLatencyBuckets(), time.Since(record.RequestedAt).Seconds())
+			}
 			if err := notifier.NotifyRequestUpdated(r.Context(), attempt.RequestID, map[string]interface{}{"source": "callback-gateway", "provider": parts[0]}); err != nil {
 				logger.Error("notify lifecycle webhook failed", "error", err, "request_id", attempt.RequestID)
 			}
+			registry.IncCounter("delivery_status_updates_total", "Delivery status updates normalized from provider callbacks.", map[string]string{
+				"channel":   string(attempt.Channel),
+				"connector": attempt.ConnectorName,
+				"provider":  parts[0],
+				"status":    string(attempt.Status),
+			})
 
 			registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{
 				"provider":          parts[0],
@@ -147,6 +162,7 @@ func recomputeRequestStatus(ctx context.Context, store *postgres.Store, requestI
 	var (
 		hasDelivered   bool
 		hasAccepted    bool
+		hasExpired     bool
 		hasSuppressed  bool
 		hasUnsupported bool
 		hasFailed      bool
@@ -158,6 +174,8 @@ func recomputeRequestStatus(ctx context.Context, store *postgres.Store, requestI
 			hasDelivered = true
 		case notification.DeliveryAttemptAccepted, notification.DeliveryAttemptPending:
 			hasAccepted = true
+		case notification.DeliveryAttemptExpired:
+			hasExpired = true
 		case notification.DeliveryAttemptSuppressed:
 			hasSuppressed = true
 		case notification.DeliveryAttemptUnsupported:
@@ -172,6 +190,8 @@ func recomputeRequestStatus(ctx context.Context, store *postgres.Store, requestI
 		return notification.RequestStatusDelivered, nil
 	case hasAccepted:
 		return notification.RequestStatusDispatched, nil
+	case hasExpired:
+		return notification.RequestStatusExpired, nil
 	case hasFailed:
 		return notification.RequestStatusFailed, nil
 	case hasUnsupported:

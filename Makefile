@@ -1,6 +1,6 @@
 COMPOSE_FILE := deployments/docker/compose.yml
 
-.PHONY: test fmt run-api run-worker run-callback up down logs ps config
+.PHONY: test fmt run-api run-worker run-callback up down logs ps config load-test
 
 test:
 	go test ./...
@@ -31,3 +31,6 @@ ps:
 
 config:
 	docker compose -f $(COMPOSE_FILE) config
+
+load-test:
+	go run ./tests/load/cmd/loadgen
