@@ -121,9 +121,10 @@ Provider selection now works like this:
 
 ### Reliability And Correctness
 
-- [ ] Add unit tests around routing, binding-set selection, retries, failover, preferences, expiry, and idempotency
-- [ ] Add integration tests for end-to-end provider flows and callback loops
-  Progress: a first live API integration harness now covers accepted requests, retry scheduling, and dead-letter replay against a running local stack, but callback-loop and broader provider-path coverage still need to be added.
+- [ ] Add deeper unit tests across routing, binding-set selection, retries, failover, preferences, expiry, and idempotency
+  Progress: worker helper coverage now exists for retry classification, provider config resolution, and circuit-skip decisions, but broader logic-path coverage should still be expanded.
+- [ ] Add deeper integration tests for end-to-end provider flows and callback loops
+  Progress: live integration coverage now includes accepted requests, retry scheduling, dead-letter replay, callback normalization, failover, and circuit-open skip behavior. More chaos-style and wider matrix coverage is still pending.
 - [ ] Add chaos/failure tests for Kafka, Postgres, and connector failures
 - [ ] Define explicit delivery guarantees and replay semantics in docs
 - [ ] Add more robust queue partitioning and consumer scaling strategy
@@ -149,13 +150,20 @@ Provider selection now works like this:
 
 ### OSS And Product Readiness
 
-- [ ] Refresh the top-level README to match the current platform instead of the old scaffold state
-- [ ] Add API documentation / OpenAPI spec
-- [ ] Add connector SDK usage docs
-- [ ] Add example client integrations for common product patterns
-- [ ] Add ADRs for key architecture decisions
-- [ ] Add operator documentation for local, staging, and production usage
-- [ ] Add a roadmap section for future areas like workflows, approval gates, and regional routing
+- [x] Refresh the top-level README to match the current platform instead of the old scaffold state
+  Why: the repo front door now explains the actual control-plane capabilities, local workflow, testing commands, and docs entry points instead of underselling the platform as a thin scaffold.
+- [x] Add API documentation / OpenAPI spec
+  Why: adopters can now understand the current API surface and resource shapes without reverse-engineering handler code.
+- [x] Add connector integration docs
+  Why: provider contributors now have a single guide for the current connector contract, failure classification expectations, and extension workflow instead of reverse-engineering the reference connectors.
+- [x] Add example client integrations for common product patterns
+  Why: adopters can now see concrete northbound usage patterns for transactional email, OTP SMS, and operational webhook alert flows without reading source code first.
+- [x] Add ADRs for key architecture decisions
+  Why: the repo now records the main architectural choices around platform boundaries, storage and messaging, retries, provider bindings, and circuit breakers so contributors do not have to infer them from code history.
+- [x] Add operator documentation for local, staging, and production usage
+  Why: operators now have a single guide for stack startup, debugging, retries, dead letters, provider health, and observability entry points.
+- [x] Add a roadmap section for future areas like workflows, approval gates, and regional routing
+  Why: future expansion areas are now documented explicitly so the repo has a product direction reference without blurring the current platform boundary.
 
 ## Suggested Next Phase
 

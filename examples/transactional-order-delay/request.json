@@ -1,0 +1,16 @@
+{
+  "idempotency_key": "order-123-delayed",
+  "event_name": "order.delayed",
+  "template_key": "order-delayed-v1",
+  "channels": ["email"],
+  "binding_set": "transactional-email",
+  "recipient": {
+    "user_id": "user-123",
+    "email": "alice@example.com"
+  },
+  "variables": {
+    "order_id": "ORD-123",
+    "reason": "carrier_delay"
+  },
+  "priority": "high"
+}

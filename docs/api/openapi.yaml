@@ -1,0 +1,934 @@
+openapi: 3.1.0
+info:
+  title: Notification Control Plane API
+  version: 0.1.0
+  description: |
+    OpenAPI-style contract for the current notification control plane surface.
+    This spec focuses on the primary control-plane resources and core operational
+    endpoints that are already implemented in the local stack.
+servers:
+  - url: http://localhost:8080
+    description: Local API service
+  - url: http://localhost:8082
+    description: Local callback gateway
+tags:
+  - name: Notification Requests
+  - name: Provider Bindings
+  - name: Provider Health
+  - name: Routing Policies
+  - name: Preference Policies
+  - name: Templates
+  - name: Delivery Policies
+  - name: Webhook Subscriptions
+  - name: Dead Letters
+  - name: Provider Callbacks
+paths:
+  /v1/notification-requests:
+    post:
+      tags: [Notification Requests]
+      summary: Submit a notification request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationRequest'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Idempotency key conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/notification-requests/{requestID}:
+    get:
+      tags: [Notification Requests]
+      summary: Get request details
+      parameters:
+        - $ref: '#/components/parameters/RequestID'
+      responses:
+        '200':
+          description: Request details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestDetailsResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/provider-bindings:
+    get:
+      tags: [Provider Bindings]
+      summary: List provider bindings
+      responses:
+        '200':
+          description: Provider bindings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  provider_bindings:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProviderBinding'
+    post:
+      tags: [Provider Bindings]
+      summary: Create or update a provider binding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderBindingUpsertRequest'
+      responses:
+        '200':
+          description: Saved provider binding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderBinding'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/provider-bindings/{channel}:
+    get:
+      tags: [Provider Bindings]
+      summary: List provider bindings for a channel
+      parameters:
+        - name: channel
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Channel'
+        - name: binding_set
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Bindings for the channel
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  channel:
+                    $ref: '#/components/schemas/Channel'
+                  binding_set:
+                    type: string
+                  provider_bindings:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProviderBinding'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/provider-binding-health:
+    get:
+      tags: [Provider Health]
+      summary: List provider binding health state
+      responses:
+        '200':
+          description: Provider binding health
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  provider_binding_health:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProviderBindingHealth'
+  /v1/provider-binding-health/{bindingID}:
+    get:
+      tags: [Provider Health]
+      summary: Get health for one provider binding
+      parameters:
+        - $ref: '#/components/parameters/BindingID'
+      responses:
+        '200':
+          description: Provider binding health
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderBindingHealth'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/provider-binding-health/{bindingID}/reset:
+    post:
+      tags: [Provider Health]
+      summary: Reset provider binding health state
+      parameters:
+        - $ref: '#/components/parameters/BindingID'
+      responses:
+        '200':
+          description: Reset provider binding health
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderBindingHealth'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/routing-policies:
+    get:
+      tags: [Routing Policies]
+      summary: List routing policies
+      responses:
+        '200':
+          description: Routing policies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  routing_policies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RoutingPolicy'
+    post:
+      tags: [Routing Policies]
+      summary: Create or update a routing policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoutingPolicyUpsertRequest'
+      responses:
+        '200':
+          description: Saved routing policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoutingPolicy'
+  /v1/routing-policies/{eventName}:
+    get:
+      tags: [Routing Policies]
+      summary: Get routing policy by event name
+      parameters:
+        - name: eventName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Routing policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoutingPolicy'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/preference-policies:
+    get:
+      tags: [Preference Policies]
+      summary: List preference policies
+      responses:
+        '200':
+          description: Preference policies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  preference_policies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PreferencePolicy'
+    post:
+      tags: [Preference Policies]
+      summary: Create or update a preference policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreferencePolicyUpsertRequest'
+      responses:
+        '200':
+          description: Saved preference policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreferencePolicy'
+  /v1/preference-policies/{userID}/{channel}:
+    get:
+      tags: [Preference Policies]
+      summary: Get a specific preference policy
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channel
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Channel'
+      responses:
+        '200':
+          description: Preference policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreferencePolicy'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/templates:
+    get:
+      tags: [Templates]
+      summary: List templates
+      responses:
+        '200':
+          description: Templates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  templates:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Template'
+    post:
+      tags: [Templates]
+      summary: Create or update a template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateUpsertRequest'
+      responses:
+        '200':
+          description: Saved template
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+  /v1/templates/{templateKey}/{channel}:
+    get:
+      tags: [Templates]
+      summary: Get a template by key and channel
+      parameters:
+        - name: templateKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channel
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Channel'
+      responses:
+        '200':
+          description: Template
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/delivery-policies:
+    get:
+      tags: [Delivery Policies]
+      summary: List delivery policies
+      responses:
+        '200':
+          description: Delivery policies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  delivery_policies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DeliveryPolicy'
+    post:
+      tags: [Delivery Policies]
+      summary: Create or update a delivery policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeliveryPolicyUpsertRequest'
+      responses:
+        '200':
+          description: Saved delivery policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryPolicy'
+  /v1/delivery-policies/{channel}:
+    get:
+      tags: [Delivery Policies]
+      summary: Get a delivery policy for a channel
+      parameters:
+        - name: channel
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Channel'
+      responses:
+        '200':
+          description: Delivery policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryPolicy'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/webhook-subscriptions:
+    get:
+      tags: [Webhook Subscriptions]
+      summary: List webhook subscriptions
+      responses:
+        '200':
+          description: Webhook subscriptions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhook_subscriptions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WebhookSubscription'
+    post:
+      tags: [Webhook Subscriptions]
+      summary: Create or update a webhook subscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookSubscriptionUpsertRequest'
+      responses:
+        '200':
+          description: Saved webhook subscription
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSubscription'
+  /v1/webhook-subscriptions/{subscriptionID}:
+    get:
+      tags: [Webhook Subscriptions]
+      summary: Get a webhook subscription
+      parameters:
+        - name: subscriptionID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Webhook subscription
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSubscription'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/dead-letters:
+    get:
+      tags: [Dead Letters]
+      summary: List dead letters
+      responses:
+        '200':
+          description: Dead letters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dead_letters:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DeadLetterNotification'
+  /v1/dead-letters/{deadLetterID}:
+    get:
+      tags: [Dead Letters]
+      summary: Get a dead letter
+      parameters:
+        - $ref: '#/components/parameters/DeadLetterID'
+      responses:
+        '200':
+          description: Dead letter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeadLetterNotification'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/dead-letters/{deadLetterID}/replay:
+    post:
+      tags: [Dead Letters]
+      summary: Replay a dead letter
+      parameters:
+        - $ref: '#/components/parameters/DeadLetterID'
+      responses:
+        '202':
+          description: Replay accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationAccepted'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/providers/{provider}/callbacks:
+    post:
+      tags: [Provider Callbacks]
+      summary: Normalize a provider callback
+      servers:
+        - url: http://localhost:8082
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderCallback'
+      responses:
+        '202':
+          description: Callback accepted and normalized
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    RequestID:
+      name: requestID
+      in: path
+      required: true
+      schema:
+        type: string
+    BindingID:
+      name: bindingID
+      in: path
+      required: true
+      schema:
+        type: string
+    DeadLetterID:
+      name: deadLetterID
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+    Channel:
+      type: string
+      enum: [email, sms, push, whatsapp, webhook]
+    Recipient:
+      type: object
+      properties:
+        user_id:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        topic:
+          type: string
+        webhook:
+          type: string
+    NotificationRequest:
+      type: object
+      properties:
+        idempotency_key:
+          type: string
+        event_name:
+          type: string
+        template_key:
+          type: string
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/Channel'
+        binding_set:
+          type: string
+        recipient:
+          $ref: '#/components/schemas/Recipient'
+        variables:
+          type: object
+          additionalProperties:
+            type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        priority:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+      required:
+        - idempotency_key
+        - event_name
+        - template_key
+        - recipient
+    NotificationAccepted:
+      type: object
+      properties:
+        request_id:
+          type: string
+        status:
+          type: string
+        accepted_at:
+          type: string
+          format: date-time
+        idempotent_replay:
+          type: boolean
+      required: [request_id, status, accepted_at]
+    NotificationRecord:
+      allOf:
+        - $ref: '#/components/schemas/NotificationRequest'
+        - type: object
+          properties:
+            request_id:
+              type: string
+            status:
+              type: string
+            requested_at:
+              type: string
+              format: date-time
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+    DeliveryAttempt:
+      type: object
+      properties:
+        attempt_id:
+          type: string
+        request_id:
+          type: string
+        attempt_number:
+          type: integer
+        max_attempts:
+          type: integer
+        channel:
+          $ref: '#/components/schemas/Channel'
+        connector_name:
+          type: string
+        status:
+          type: string
+        provider_message_id:
+          type: string
+        destination:
+          type: string
+        error_message:
+          type: string
+    ScheduledRetry:
+      type: object
+      properties:
+        retry_id:
+          type: string
+        request_id:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        binding_set:
+          type: string
+        available_at:
+          type: string
+          format: date-time
+        last_error:
+          type: string
+        triggered_by_attempt_number:
+          type: integer
+    DeadLetterNotification:
+      type: object
+      properties:
+        dead_letter_id:
+          type: string
+        request_id:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        binding_set:
+          type: string
+        connector_name:
+          type: string
+        reason:
+          type: string
+        attempt_count:
+          type: integer
+        last_error:
+          type: string
+        replay_request_id:
+          type: string
+    RequestDetailsResponse:
+      type: object
+      properties:
+        request:
+          $ref: '#/components/schemas/NotificationRecord'
+        delivery_attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeliveryAttempt'
+        scheduled_retries:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScheduledRetry'
+        dead_letters:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeadLetterNotification'
+    ProviderBinding:
+      type: object
+      properties:
+        binding_id:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        binding_set:
+          type: string
+        connector_name:
+          type: string
+        endpoint_url:
+          type: string
+        config_refs:
+          type: object
+          additionalProperties:
+            type: string
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+    ProviderBindingUpsertRequest:
+      type: object
+      properties:
+        channel:
+          $ref: '#/components/schemas/Channel'
+        binding_set:
+          type: string
+        connector_name:
+          type: string
+        endpoint_url:
+          type: string
+        config_refs:
+          type: object
+          additionalProperties:
+            type: string
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+      required: [channel, connector_name, endpoint_url]
+    ProviderBindingHealth:
+      type: object
+      properties:
+        binding_id:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        binding_set:
+          type: string
+        connector_name:
+          type: string
+        circuit_state:
+          type: string
+          enum: [closed, open]
+        consecutive_failures:
+          type: integer
+        opened_at:
+          type: string
+          format: date-time
+        cooldown_until:
+          type: string
+          format: date-time
+        last_failure_class:
+          type: string
+        last_error:
+          type: string
+        last_failure_at:
+          type: string
+          format: date-time
+    RoutingPolicy:
+      type: object
+      properties:
+        policy_id:
+          type: string
+        event_name:
+          type: string
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/Channel'
+        binding_set:
+          type: string
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+    RoutingPolicyUpsertRequest:
+      type: object
+      properties:
+        event_name:
+          type: string
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/Channel'
+        binding_set:
+          type: string
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+      required: [event_name, channels]
+    PreferencePolicy:
+      type: object
+      properties:
+        policy_id:
+          type: string
+        user_id:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        is_enabled:
+          type: boolean
+    PreferencePolicyUpsertRequest:
+      type: object
+      properties:
+        user_id:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        is_enabled:
+          type: boolean
+      required: [user_id, channel, is_enabled]
+    Template:
+      type: object
+      properties:
+        template_id:
+          type: string
+        template_key:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        subject_template:
+          type: string
+        body_template:
+          type: string
+        enabled:
+          type: boolean
+    TemplateUpsertRequest:
+      type: object
+      properties:
+        template_key:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        subject_template:
+          type: string
+        body_template:
+          type: string
+        enabled:
+          type: boolean
+      required: [template_key, channel, body_template]
+    DeliveryPolicy:
+      type: object
+      properties:
+        policy_id:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        max_attempts:
+          type: integer
+        backoff_seconds:
+          type: integer
+        enabled:
+          type: boolean
+    DeliveryPolicyUpsertRequest:
+      type: object
+      properties:
+        channel:
+          $ref: '#/components/schemas/Channel'
+        max_attempts:
+          type: integer
+        backoff_seconds:
+          type: integer
+        enabled:
+          type: boolean
+      required: [channel, max_attempts, backoff_seconds, enabled]
+    WebhookSubscription:
+      type: object
+      properties:
+        subscription_id:
+          type: string
+        target_url:
+          type: string
+        enabled:
+          type: boolean
+    WebhookSubscriptionUpsertRequest:
+      type: object
+      properties:
+        target_url:
+          type: string
+        enabled:
+          type: boolean
+      required: [target_url, enabled]
+    ProviderCallback:
+      type: object
+      properties:
+        provider_message_id:
+          type: string
+        status:
+          type: string
+        error_code:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+      required: [provider_message_id, status]

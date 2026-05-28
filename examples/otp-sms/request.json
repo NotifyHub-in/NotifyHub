@@ -1,0 +1,14 @@
+{
+  "idempotency_key": "otp-456-requested",
+  "event_name": "otp.requested",
+  "template_key": "otp-requested-v1",
+  "channels": ["sms"],
+  "recipient": {
+    "user_id": "user-otp-456",
+    "phone": "+15551234567"
+  },
+  "variables": {
+    "otp": "482193"
+  },
+  "priority": "high"
+}
