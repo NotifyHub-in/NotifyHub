@@ -1,12 +1,15 @@
 COMPOSE_FILE := deployments/docker/compose.yml
 
-.PHONY: test fmt run-api run-worker run-callback up down logs ps config load-test
+.PHONY: test fmt migrate run-api run-worker run-callback up down logs ps config load-test
 
 test:
 	go test ./...
 
 fmt:
 	go fmt ./...
+
+migrate:
+	go run ./apps/migrate/cmd/migrate
 
 run-api:
 	go run ./apps/api/cmd/api

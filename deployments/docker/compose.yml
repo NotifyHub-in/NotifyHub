@@ -9,12 +9,22 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ../../migrations:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d notification_control_plane"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: build/docker/migrate.Dockerfile
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/notification_control_plane?sslmode=disable
+      MIGRATIONS_DIR: /app/migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   kafka:
     image: apache/kafka:3.9.0
@@ -139,8 +149,8 @@ services:
       KAFKA_BROKERS: kafka:9092
       KAFKA_NOTIFICATION_TOPIC: notification.requests
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       kafka:
         condition: service_healthy
     ports:
@@ -161,9 +171,12 @@ services:
       CONNECTOR_WEBHOOK_URL: http://connector-webhook:8093
       CONNECTOR_EMAIL_URL: http://connector-email:8091
       CONNECTOR_SMS_URL: http://connector-sms:8092
+      EMAIL_PROVIDER_API_KEY_DEMO: demo-email-provider-key
+      SMS_PROVIDER_AUTH_TOKEN_DEMO: demo-sms-provider-token
+      WEBHOOK_PROVIDER_SHARED_SECRET_DEMO: demo-webhook-shared-secret
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       kafka:
         condition: service_healthy
       connector-webhook:
@@ -185,8 +198,8 @@ services:
       PORT: 8082
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/notification_control_plane?sslmode=disable
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "8082:8082"
 

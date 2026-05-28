@@ -208,6 +208,7 @@ func main() {
 				BindingSet:    req.BindingSet,
 				ConnectorName: req.ConnectorName,
 				EndpointURL:   req.EndpointURL,
+				ConfigRefs:    req.ConfigRefs,
 				Enabled:       req.Enabled,
 				Priority:      req.Priority,
 			}

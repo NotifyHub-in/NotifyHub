@@ -105,24 +105,26 @@ type DeliveryPlan struct {
 }
 
 type ProviderBinding struct {
-	BindingID     string    `json:"binding_id"`
-	Channel       Channel   `json:"channel"`
-	BindingSet    string    `json:"binding_set,omitempty"`
-	ConnectorName string    `json:"connector_name"`
-	EndpointURL   string    `json:"endpoint_url"`
-	Enabled       bool      `json:"enabled"`
-	Priority      int       `json:"priority"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	BindingID     string            `json:"binding_id"`
+	Channel       Channel           `json:"channel"`
+	BindingSet    string            `json:"binding_set,omitempty"`
+	ConnectorName string            `json:"connector_name"`
+	EndpointURL   string            `json:"endpoint_url"`
+	ConfigRefs    map[string]string `json:"config_refs,omitempty"`
+	Enabled       bool              `json:"enabled"`
+	Priority      int               `json:"priority"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
 }
 
 type ProviderBindingUpsertRequest struct {
-	Channel       Channel `json:"channel"`
-	BindingSet    string  `json:"binding_set,omitempty"`
-	ConnectorName string  `json:"connector_name"`
-	EndpointURL   string  `json:"endpoint_url"`
-	Enabled       bool    `json:"enabled"`
-	Priority      int     `json:"priority"`
+	Channel       Channel           `json:"channel"`
+	BindingSet    string            `json:"binding_set,omitempty"`
+	ConnectorName string            `json:"connector_name"`
+	EndpointURL   string            `json:"endpoint_url"`
+	ConfigRefs    map[string]string `json:"config_refs,omitempty"`
+	Enabled       bool              `json:"enabled"`
+	Priority      int               `json:"priority"`
 }
 
 type RoutingPolicy struct {
@@ -196,12 +198,13 @@ type DeliveryPolicyUpsertRequest struct {
 }
 
 type ConnectorSendRequest struct {
-	RequestID   string            `json:"request_id"`
-	Channel     Channel           `json:"channel"`
-	Destination string            `json:"destination"`
-	Subject     string            `json:"subject,omitempty"`
-	Body        string            `json:"body"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	RequestID      string            `json:"request_id"`
+	Channel        Channel           `json:"channel"`
+	Destination    string            `json:"destination"`
+	Subject        string            `json:"subject,omitempty"`
+	Body           string            `json:"body"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
+	ProviderConfig map[string]string `json:"provider_config,omitempty"`
 }
 
 type ConnectorSendResponse struct {

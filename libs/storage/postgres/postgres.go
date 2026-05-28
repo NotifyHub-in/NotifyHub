@@ -428,24 +428,31 @@ func (s *Store) GetDeliveryAttemptByProviderMessageID(ctx context.Context, provi
 }
 
 func (s *Store) UpsertProviderBinding(ctx context.Context, binding notification.ProviderBinding) error {
+	configRefsJSON, err := marshalStringMap(binding.ConfigRefs)
+	if err != nil {
+		return fmt.Errorf("marshal provider binding config refs: %w", err)
+	}
+
 	const query = `
 		INSERT INTO provider_bindings (
-			binding_id, channel, binding_set, connector_name, endpoint_url, enabled, priority
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			binding_id, channel, binding_set, connector_name, endpoint_url, config_refs, enabled, priority
+		) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
 		ON CONFLICT (channel, binding_set, connector_name)
 		DO UPDATE SET
 			endpoint_url = EXCLUDED.endpoint_url,
+			config_refs = EXCLUDED.config_refs,
 			enabled = EXCLUDED.enabled,
 			priority = EXCLUDED.priority,
 			updated_at = NOW()
 	`
 
-	_, err := s.db.ExecContext(ctx, query,
+	_, err = s.db.ExecContext(ctx, query,
 		binding.BindingID,
 		binding.Channel,
 		binding.BindingSet,
 		binding.ConnectorName,
 		binding.EndpointURL,
+		string(configRefsJSON),
 		binding.Enabled,
 		binding.Priority,
 	)
@@ -457,7 +464,7 @@ func (s *Store) UpsertProviderBinding(ctx context.Context, binding notification.
 
 func (s *Store) ListProviderBindings(ctx context.Context) ([]notification.ProviderBinding, error) {
 	const query = `
-		SELECT binding_id, channel, binding_set, connector_name, endpoint_url, enabled, priority, created_at, updated_at
+		SELECT binding_id, channel, binding_set, connector_name, endpoint_url, config_refs, enabled, priority, created_at, updated_at
 		FROM provider_bindings
 		ORDER BY priority ASC, channel ASC, binding_set ASC
 	`
@@ -470,19 +477,27 @@ func (s *Store) ListProviderBindings(ctx context.Context) ([]notification.Provid
 
 	var bindings []notification.ProviderBinding
 	for rows.Next() {
-		var binding notification.ProviderBinding
+		var (
+			binding        notification.ProviderBinding
+			configRefsJSON []byte
+		)
 		if err := rows.Scan(
 			&binding.BindingID,
 			&binding.Channel,
 			&binding.BindingSet,
 			&binding.ConnectorName,
 			&binding.EndpointURL,
+			&configRefsJSON,
 			&binding.Enabled,
 			&binding.Priority,
 			&binding.CreatedAt,
 			&binding.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan provider binding: %w", err)
+		}
+		binding.ConfigRefs, err = unmarshalStringMap(configRefsJSON)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal provider binding config refs: %w", err)
 		}
 		bindings = append(bindings, binding)
 	}
@@ -507,19 +522,27 @@ func (s *Store) ListProviderBindingsByChannel(ctx context.Context, channel notif
 
 		var loaded []notification.ProviderBinding
 		for rows.Next() {
-			var binding notification.ProviderBinding
+			var (
+				binding        notification.ProviderBinding
+				configRefsJSON []byte
+			)
 			if err := rows.Scan(
 				&binding.BindingID,
 				&binding.Channel,
 				&binding.BindingSet,
 				&binding.ConnectorName,
 				&binding.EndpointURL,
+				&configRefsJSON,
 				&binding.Enabled,
 				&binding.Priority,
 				&binding.CreatedAt,
 				&binding.UpdatedAt,
 			); err != nil {
 				return nil, fmt.Errorf("scan provider binding by channel: %w", err)
+			}
+			binding.ConfigRefs, err = unmarshalStringMap(configRefsJSON)
+			if err != nil {
+				return nil, fmt.Errorf("unmarshal provider binding by channel config refs: %w", err)
 			}
 			loaded = append(loaded, binding)
 		}
@@ -530,7 +553,7 @@ func (s *Store) ListProviderBindingsByChannel(ctx context.Context, channel notif
 	}
 
 	baseQuery := `
-		SELECT binding_id, channel, binding_set, connector_name, endpoint_url, enabled, priority, created_at, updated_at
+		SELECT binding_id, channel, binding_set, connector_name, endpoint_url, config_refs, enabled, priority, created_at, updated_at
 		FROM provider_bindings
 		WHERE channel = $1 AND enabled = TRUE
 	`
@@ -562,6 +585,25 @@ func (s *Store) ListProviderBindingsByChannel(ctx context.Context, channel notif
 		return nil, ErrNotFound
 	}
 	return bindings, nil
+}
+
+func marshalStringMap(values map[string]string) ([]byte, error) {
+	if len(values) == 0 {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(values)
+}
+
+func unmarshalStringMap(raw []byte) (map[string]string, error) {
+	if len(raw) == 0 {
+		return map[string]string{}, nil
+	}
+
+	values := make(map[string]string)
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, err
+	}
+	return values, nil
 }
 
 func (s *Store) GetProviderBindingByChannel(ctx context.Context, channel notification.Channel, bindingSet string) (notification.ProviderBinding, error) {

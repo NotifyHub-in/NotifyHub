@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -379,6 +380,39 @@ func main() {
 				}
 
 				for bindingIndex, binding := range bindings {
+					providerConfig, err := resolveProviderConfig(binding)
+					if err != nil {
+						status.Store("last_error", err.Error())
+						logger.Error("resolve provider config failed", "error", err, "request_id", plan.Request.RequestID, "channel", channel, "connector", binding.ConnectorName, "binding_set", binding.BindingSet)
+						attempt := notification.DeliveryAttempt{
+							AttemptID:     id.New(12),
+							RequestID:     plan.Request.RequestID,
+							AttemptNumber: nextAttemptNumber,
+							MaxAttempts:   totalMaxAttempts,
+							Channel:       channel,
+							ConnectorName: binding.ConnectorName,
+							Status:        notification.DeliveryAttemptFailed,
+							Destination:   destination(plan.Request, channel),
+							ErrorMessage:  err.Error(),
+						}
+						if createErr := store.CreateDeliveryAttempt(messageCtx, attempt); createErr != nil {
+							logger.Error("create provider config failure attempt failed", "error", createErr, "request_id", plan.Request.RequestID, "channel", channel, "connector", binding.ConnectorName)
+							attemptStats.failed++
+							break
+						}
+						recordDeliveryAttemptMetric(registry, attempt)
+						nextAttemptNumber++
+						if nextAttemptNumber > totalMaxAttempts {
+							break
+						}
+						if bindingIndex+1 < len(bindings) {
+							recordFailoverMetric(registry, channel, binding.ConnectorName, bindings[bindingIndex+1].ConnectorName)
+						}
+						continue
+					}
+
+					bindingSendReq := sendReq
+					bindingSendReq.ProviderConfig = providerConfig
 					connector := connectorClient{
 						baseURL: binding.EndpointURL,
 						client:  &http.Client{Timeout: 10 * time.Second},
@@ -403,7 +437,7 @@ func main() {
 							break
 						}
 
-						sendResp, err := connector.send(messageCtx, sendReq)
+						sendResp, err := connector.send(messageCtx, bindingSendReq)
 						if err == nil {
 							attempt.Status = notification.DeliveryAttemptAccepted
 							attempt.ProviderMessageID = sendResp.ProviderMessageID
@@ -677,6 +711,30 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 
 func isExpired(record notification.NotificationRecord, now time.Time) bool {
 	return record.ExpiresAt != nil && !record.ExpiresAt.After(now)
+}
+
+func resolveProviderConfig(binding notification.ProviderBinding) (map[string]string, error) {
+	if len(binding.ConfigRefs) == 0 {
+		return nil, nil
+	}
+
+	resolved := make(map[string]string, len(binding.ConfigRefs))
+	for key, envVar := range binding.ConfigRefs {
+		if key == "" {
+			return nil, fmt.Errorf("provider config ref key cannot be empty for connector %s", binding.ConnectorName)
+		}
+		if envVar == "" {
+			return nil, fmt.Errorf("provider config ref %q has an empty env var name for connector %s", key, binding.ConnectorName)
+		}
+
+		value, ok := os.LookupEnv(envVar)
+		if !ok || value == "" {
+			return nil, fmt.Errorf("missing provider config env var %q for connector %s", envVar, binding.ConnectorName)
+		}
+		resolved[key] = value
+	}
+
+	return resolved, nil
 }
 
 type deliveryStats struct {

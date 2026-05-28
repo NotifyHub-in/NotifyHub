@@ -2,17 +2,18 @@
 
 An open-source, Kubernetes-inspired notification control plane for modern products.
 
-This repository contains the v1 scaffold for a Dockerized, Go-based platform that accepts notification intents, evaluates policies, routes delivery through pluggable connectors, and tracks delivery lifecycle state.
+This repository contains an early working version of a Dockerized, Go-based platform that accepts notification intents, evaluates policies, routes delivery through pluggable connectors, and tracks delivery lifecycle state.
 
 ## Current status
 
-This is the initial implementation scaffold. It includes:
+The current build includes:
 
-- a monorepo layout for control-plane services and connectors
-- runnable HTTP services for `api`, `worker`, and `callback-gateway`
+- control-plane services for `api`, `worker`, and `callback-gateway`
 - runnable connector stubs for `email`, `sms`, and `webhook`
-- Dockerfiles and a local `docker compose` stack
-- a shared Go module and common packages for config, HTTP helpers, and service metadata
+- PostgreSQL + Kafka backed request processing
+- routing, preferences, templates, retries, failover, callbacks, and lifecycle webhooks
+- Prometheus, Grafana, Kafka UI, and Adminer for local visibility
+- versioned SQL migrations applied through a dedicated migration runner
 
 For the current build log and production-readiness checklist, see [docs/project-status.md](/Users/Shaik/notifications/notification-control-plane/docs/project-status.md).
 
@@ -21,6 +22,7 @@ For the current build log and production-readiness checklist, see [docs/project-
 ```text
 apps/
   api/
+  migrate/
   worker/
   callback-gateway/
 connectors/
@@ -45,6 +47,12 @@ Start the full local stack:
 make up
 ```
 
+Run migrations directly against the configured database:
+
+```bash
+make migrate
+```
+
 Useful endpoints:
 
 - API: `http://localhost:8080/healthz`
@@ -54,6 +62,9 @@ Useful endpoints:
 - SMS connector: `http://localhost:8092/healthz`
 - Webhook connector: `http://localhost:8093/healthz`
 - Kafka UI: `http://localhost:8085`
+- Adminer: `http://localhost:8086`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3000`
 
 Run tests locally:
 
@@ -61,10 +72,4 @@ Run tests locally:
 make test
 ```
 
-## Next steps
-
-- replace in-memory stubs with PostgreSQL-backed repositories
-- add Kafka producers and consumers for request ingestion and worker dispatch
-- define canonical persistence schemas for notification requests and delivery attempts
-- add policy, template, and provider management APIs
-- implement connector contract authentication and callback signatures
+The local Docker stack now runs migrations through a one-shot `migrate` service before `api`, `worker`, and `callback-gateway` start. Future schema changes should be added as new numbered `.sql` files in [migrations](/Users/Shaik/notifications/notification-control-plane/migrations), not by editing older versions in place.

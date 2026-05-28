@@ -50,11 +50,14 @@ CREATE TABLE IF NOT EXISTS provider_bindings (
     binding_set TEXT NOT NULL DEFAULT '',
     connector_name TEXT NOT NULL,
     endpoint_url TEXT NOT NULL,
+    config_refs JSONB NOT NULL DEFAULT '{}'::jsonb,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     priority INTEGER NOT NULL DEFAULT 100,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE provider_bindings ADD COLUMN IF NOT EXISTS config_refs JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 DO $$
 BEGIN
@@ -73,11 +76,11 @@ DROP INDEX IF EXISTS provider_bindings_channel_connector_name_idx;
 CREATE UNIQUE INDEX IF NOT EXISTS provider_bindings_channel_connector_name_idx
     ON provider_bindings(channel, binding_set, connector_name);
 
-INSERT INTO provider_bindings (binding_id, channel, binding_set, connector_name, endpoint_url, enabled, priority)
+INSERT INTO provider_bindings (binding_id, channel, binding_set, connector_name, endpoint_url, config_refs, enabled, priority)
 VALUES
-    ('binding-email-default', 'email', '', 'connector-email', 'http://connector-email:8091', TRUE, 100),
-    ('binding-sms-default', 'sms', '', 'connector-sms', 'http://connector-sms:8092', TRUE, 100),
-    ('binding-webhook-default', 'webhook', '', 'connector-webhook', 'http://connector-webhook:8093', TRUE, 100)
+    ('binding-email-default', 'email', '', 'connector-email', 'http://connector-email:8091', '{}'::jsonb, TRUE, 100),
+    ('binding-sms-default', 'sms', '', 'connector-sms', 'http://connector-sms:8092', '{}'::jsonb, TRUE, 100),
+    ('binding-webhook-default', 'webhook', '', 'connector-webhook', 'http://connector-webhook:8093', '{}'::jsonb, TRUE, 100)
 ON CONFLICT (channel, binding_set, connector_name) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS routing_policies (
@@ -126,7 +129,7 @@ CREATE TABLE IF NOT EXISTS templates (
 
 INSERT INTO templates (template_id, template_key, channel, subject_template, body_template, enabled)
 VALUES
-    ('template-order-delayed-email', 'order-delayed-v1', 'email', 'Order {{order_id}} delayed', 'Your order {{order_id}} is delayed. We will send an update soon.', TRUE),
+    ('template-order-delayed-email', 'order-delayed-v1', 'email', 'Order {{order_id}} delayed', 'Your order {{order_id}} is delayed. Reason: {{reason}}. We will send an update soon.', TRUE),
     ('template-otp-requested-sms', 'otp-requested-v1', 'sms', '', 'Your OTP is {{otp}}.', TRUE),
     ('template-payment-failed-webhook', 'payment-failed-v1', 'webhook', '', '{"event":"payment.failed","payment_id":"{{payment_id}}","reason":"{{reason}}"}', TRUE)
 ON CONFLICT (template_key, channel) DO NOTHING;

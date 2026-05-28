@@ -10,6 +10,9 @@ This file tracks what has been built so far in the notification control plane an
 - [x] Dockerized local stack
   Why: gives us a reproducible development environment with API, worker, callback gateway, connectors, Postgres, Kafka, Kafka UI, Adminer, Prometheus, and Grafana.
 
+- [x] Versioned migration runner
+  Why: schema changes are now applied in a tracked order through versioned SQL files, which gives adopters and future deploys a safer database upgrade path.
+
 - [x] Canonical notification request model
   Why: client systems can publish generic notification intent instead of hardcoding vendor-specific delivery logic inside their business apps.
 
@@ -27,6 +30,9 @@ This file tracks what has been built so far in the notification control plane an
 
 - [x] Provider bindings
   Why: runtime configuration chooses which connector endpoint is active for a channel without requiring code changes.
+
+- [x] Env-backed provider secret references
+  Why: provider bindings can reference runtime secret names without storing actual API keys or tokens in Postgres, which is a safer bridge until full secret-manager integration exists.
 
 - [x] Provider failover by priority
   Why: when one binding fails, the worker can fall through to a lower-priority binding for the same route.
@@ -89,7 +95,6 @@ Provider selection now works like this:
 
 ### Core Platform Hardening
 
-- [ ] Replace the single evolving SQL file with a proper migration/versioning workflow
 - [ ] Add dead-letter queue handling and replay tooling
 - [ ] Move retry timing off in-process sleeps to a scheduled/requeue-based retry model
 - [ ] Define a clearer connector capability and error taxonomy contract
@@ -101,8 +106,9 @@ Provider selection now works like this:
 ### Security
 
 - [ ] Add authentication for control-plane APIs
+  Deferred for now because the current deployment is internal-only, but it should be added before wider shared or external exposure.
 - [ ] Add authorization / RBAC for config and query endpoints
-- [ ] Add secure secret management for provider credentials
+- [ ] Replace env-backed secret refs with full secret-manager integration for provider credentials
 - [ ] Add signed outbound lifecycle webhooks
 - [ ] Add inbound callback signature verification
 - [ ] Add audit logs for policy, template, provider, and subscription changes
