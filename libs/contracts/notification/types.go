@@ -102,6 +102,13 @@ type DeliveryAttempt struct {
 
 type DeliveryPlan struct {
 	Request NotificationRecord `json:"request"`
+	Retry   *RetryDirective    `json:"retry,omitempty"`
+}
+
+type RetryDirective struct {
+	RetryID    string  `json:"retry_id"`
+	Channel    Channel `json:"channel"`
+	BindingSet string  `json:"binding_set,omitempty"`
 }
 
 type ProviderBinding struct {
@@ -197,6 +204,35 @@ type DeliveryPolicyUpsertRequest struct {
 	Enabled        bool    `json:"enabled"`
 }
 
+type ScheduledRetry struct {
+	RetryID                  string     `json:"retry_id"`
+	RequestID                string     `json:"request_id"`
+	Channel                  Channel    `json:"channel"`
+	BindingSet               string     `json:"binding_set,omitempty"`
+	AvailableAt              time.Time  `json:"available_at"`
+	ClaimedAt                *time.Time `json:"claimed_at,omitempty"`
+	LastError                string     `json:"last_error,omitempty"`
+	TriggeredByAttemptNumber int        `json:"triggered_by_attempt_number"`
+	CreatedAt                time.Time  `json:"created_at"`
+	UpdatedAt                time.Time  `json:"updated_at"`
+}
+
+type DeadLetterNotification struct {
+	DeadLetterID    string         `json:"dead_letter_id"`
+	RequestID       string         `json:"request_id"`
+	Channel         Channel        `json:"channel"`
+	BindingSet      string         `json:"binding_set,omitempty"`
+	ConnectorName   string         `json:"connector_name"`
+	Reason          string         `json:"reason"`
+	AttemptCount    int            `json:"attempt_count"`
+	LastError       string         `json:"last_error,omitempty"`
+	PayloadSnapshot map[string]any `json:"payload_snapshot,omitempty"`
+	ReplayRequestID string         `json:"replay_request_id,omitempty"`
+	ReplayedAt      *time.Time     `json:"replayed_at,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+}
+
 type ConnectorSendRequest struct {
 	RequestID      string            `json:"request_id"`
 	Channel        Channel           `json:"channel"`
@@ -205,6 +241,31 @@ type ConnectorSendRequest struct {
 	Body           string            `json:"body"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
 	ProviderConfig map[string]string `json:"provider_config,omitempty"`
+}
+
+type FailureClass string
+
+const (
+	FailureClassTransient      FailureClass = "transient"
+	FailureClassPermanent      FailureClass = "permanent"
+	FailureClassRateLimited    FailureClass = "rate_limited"
+	FailureClassMisconfigured  FailureClass = "misconfigured"
+	FailureClassUnauthorized   FailureClass = "unauthorized"
+	FailureClassInvalidRequest FailureClass = "invalid_request"
+)
+
+type ProviderCircuitState string
+
+const (
+	ProviderCircuitStateClosed ProviderCircuitState = "closed"
+	ProviderCircuitStateOpen   ProviderCircuitState = "open"
+)
+
+type ConnectorErrorResponse struct {
+	Error          string       `json:"error"`
+	Code           string       `json:"code,omitempty"`
+	Classification FailureClass `json:"classification,omitempty"`
+	Retryable      bool         `json:"retryable,omitempty"`
 }
 
 type ConnectorSendResponse struct {
@@ -217,6 +278,22 @@ type ConnectorSendResponse struct {
 type ConnectorCapabilities struct {
 	Name     string    `json:"name"`
 	Channels []Channel `json:"channels"`
+}
+
+type ProviderBindingHealth struct {
+	BindingID           string               `json:"binding_id"`
+	Channel             Channel              `json:"channel"`
+	BindingSet          string               `json:"binding_set,omitempty"`
+	ConnectorName       string               `json:"connector_name"`
+	CircuitState        ProviderCircuitState `json:"circuit_state"`
+	ConsecutiveFailures int                  `json:"consecutive_failures"`
+	OpenedAt            *time.Time           `json:"opened_at,omitempty"`
+	CooldownUntil       *time.Time           `json:"cooldown_until,omitempty"`
+	LastFailureClass    FailureClass         `json:"last_failure_class,omitempty"`
+	LastError           string               `json:"last_error,omitempty"`
+	LastFailureAt       *time.Time           `json:"last_failure_at,omitempty"`
+	CreatedAt           time.Time            `json:"created_at"`
+	UpdatedAt           time.Time            `json:"updated_at"`
 }
 
 type ProviderCallback struct {

@@ -604,6 +604,185 @@
       ],
       "title": "DB Operation Rate",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 32
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "scheduled_retry_backlog_total",
+          "legendFormat": "retry backlog",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "scheduled_retry_ready_total",
+          "legendFormat": "retry ready",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "dead_letter_backlog_total",
+          "legendFormat": "dead-letter backlog",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "editorMode": "code",
+          "expr": "dead_letter_unreplayed_total",
+          "legendFormat": "dead-letter unreplayed",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Retry and Dead-Letter Backlog",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 32
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "scheduled_retry_oldest_age_seconds",
+          "legendFormat": "oldest retry age",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "dead_letter_oldest_age_seconds",
+          "legendFormat": "oldest dead-letter age",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, channel) (rate(scheduled_retry_pickup_delay_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "retry pickup p95 {{channel}}",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Retry and Dead-Letter Age",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 32
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (action, channel) (rate(scheduled_retry_events_total[$__rate_interval]))",
+          "legendFormat": "{{action}} {{channel}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum by (channel, connector) (rate(dead_letters_total[$__rate_interval]))",
+          "legendFormat": "dead-letter {{channel}} {{connector}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum by (outcome) (rate(dead_letter_replay_api_events_total[$__rate_interval]))",
+          "legendFormat": "replay {{outcome}}",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Retry Lifecycle and Replay Rate",
+      "type": "timeseries"
     }
   ],
   "refresh": "5s",
@@ -625,6 +804,6 @@
   "timezone": "",
   "title": "Notification Control Plane Load Test",
   "uid": "notification-control-plane-load-test",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }

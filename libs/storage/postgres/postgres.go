@@ -614,6 +614,187 @@ func (s *Store) GetProviderBindingByChannel(ctx context.Context, channel notific
 	return bindings[0], nil
 }
 
+func (s *Store) UpsertProviderBindingHealth(ctx context.Context, health notification.ProviderBindingHealth) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("upsert_provider_binding_health", startedAt, err)
+	}()
+
+	const query = `
+		INSERT INTO provider_binding_health (
+			binding_id, channel, binding_set, connector_name, circuit_state, consecutive_failures,
+			opened_at, cooldown_until, last_failure_class, last_error, last_failure_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (binding_id)
+		DO UPDATE SET
+			channel = EXCLUDED.channel,
+			binding_set = EXCLUDED.binding_set,
+			connector_name = EXCLUDED.connector_name,
+			circuit_state = EXCLUDED.circuit_state,
+			consecutive_failures = EXCLUDED.consecutive_failures,
+			opened_at = EXCLUDED.opened_at,
+			cooldown_until = EXCLUDED.cooldown_until,
+			last_failure_class = EXCLUDED.last_failure_class,
+			last_error = EXCLUDED.last_error,
+			last_failure_at = EXCLUDED.last_failure_at,
+			updated_at = NOW()
+	`
+
+	_, err = s.db.ExecContext(ctx, query,
+		health.BindingID,
+		health.Channel,
+		health.BindingSet,
+		health.ConnectorName,
+		health.CircuitState,
+		health.ConsecutiveFailures,
+		health.OpenedAt,
+		health.CooldownUntil,
+		health.LastFailureClass,
+		health.LastError,
+		health.LastFailureAt,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert provider binding health: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetProviderBindingHealth(ctx context.Context, bindingID string) (health notification.ProviderBindingHealth, err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("get_provider_binding_health", startedAt, err)
+	}()
+
+	const query = `
+		SELECT binding_id, channel, binding_set, connector_name, circuit_state, consecutive_failures,
+		       opened_at, cooldown_until, last_failure_class, last_error, last_failure_at, created_at, updated_at
+		FROM provider_binding_health
+		WHERE binding_id = $1
+		LIMIT 1
+	`
+
+	health, err = scanProviderBindingHealth(s.db.QueryRowContext(ctx, query, bindingID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return notification.ProviderBindingHealth{}, ErrNotFound
+	}
+	if err != nil {
+		return notification.ProviderBindingHealth{}, fmt.Errorf("query provider binding health: %w", err)
+	}
+	return health, nil
+}
+
+func (s *Store) ListProviderBindingHealth(ctx context.Context) (healthRecords []notification.ProviderBindingHealth, err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("list_provider_binding_health", startedAt, err)
+	}()
+
+	const query = `
+		SELECT binding_id, channel, binding_set, connector_name, circuit_state, consecutive_failures,
+		       opened_at, cooldown_until, last_failure_class, last_error, last_failure_at, created_at, updated_at
+		FROM provider_binding_health
+		ORDER BY channel ASC, binding_set ASC, connector_name ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query provider binding health: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		record, scanErr := scanProviderBindingHealth(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan provider binding health: %w", scanErr)
+		}
+		healthRecords = append(healthRecords, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate provider binding health: %w", err)
+	}
+	return healthRecords, nil
+}
+
+func (s *Store) ResetProviderBindingHealth(ctx context.Context, bindingID string) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("reset_provider_binding_health", startedAt, err)
+	}()
+
+	const query = `
+		UPDATE provider_binding_health
+		SET circuit_state = $2,
+		    consecutive_failures = 0,
+		    opened_at = NULL,
+		    cooldown_until = NULL,
+		    last_failure_class = '',
+		    last_error = '',
+		    last_failure_at = NULL,
+		    updated_at = NOW()
+		WHERE binding_id = $1
+	`
+
+	result, err := s.db.ExecContext(ctx, query, bindingID, notification.ProviderCircuitStateClosed)
+	if err != nil {
+		return fmt.Errorf("reset provider binding health: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanProviderBindingHealth(scanner rowScanner) (notification.ProviderBindingHealth, error) {
+	var (
+		record          notification.ProviderBindingHealth
+		openedAt        sql.NullTime
+		cooldownUntil   sql.NullTime
+		lastFailureAt   sql.NullTime
+		lastFailureText string
+	)
+
+	err := scanner.Scan(
+		&record.BindingID,
+		&record.Channel,
+		&record.BindingSet,
+		&record.ConnectorName,
+		&record.CircuitState,
+		&record.ConsecutiveFailures,
+		&openedAt,
+		&cooldownUntil,
+		&lastFailureText,
+		&record.LastError,
+		&lastFailureAt,
+		&record.CreatedAt,
+		&record.UpdatedAt,
+	)
+	if err != nil {
+		return notification.ProviderBindingHealth{}, err
+	}
+	if openedAt.Valid {
+		record.OpenedAt = &openedAt.Time
+	}
+	if cooldownUntil.Valid {
+		record.CooldownUntil = &cooldownUntil.Time
+	}
+	if lastFailureAt.Valid {
+		record.LastFailureAt = &lastFailureAt.Time
+	}
+	record.LastFailureClass = notification.FailureClass(lastFailureText)
+	if record.CircuitState == "" {
+		record.CircuitState = notification.ProviderCircuitStateClosed
+	}
+	return record, nil
+}
+
 func (s *Store) UpsertRoutingPolicy(ctx context.Context, policy notification.RoutingPolicy) error {
 	channelsJSON, err := json.Marshal(policy.Channels)
 	if err != nil {
@@ -1241,4 +1422,370 @@ func (s *Store) ListWebhookDeliveryAttempts(ctx context.Context, requestID strin
 		return nil, fmt.Errorf("iterate webhook delivery attempts: %w", err)
 	}
 	return attempts, nil
+}
+
+func (s *Store) CountDeliveryAttemptsByRequestAndChannel(ctx context.Context, requestID string, channel notification.Channel) (count int, err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("count_delivery_attempts_by_request_and_channel", startedAt, err)
+	}()
+
+	const query = `
+		SELECT COUNT(*)
+		FROM delivery_attempts
+		WHERE request_id = $1 AND channel = $2
+	`
+	if err = s.db.QueryRowContext(ctx, query, requestID, channel).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count delivery attempts by request and channel: %w", err)
+	}
+	return count, nil
+}
+
+func (s *Store) CreateScheduledRetry(ctx context.Context, retry notification.ScheduledRetry) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("create_scheduled_retry", startedAt, err)
+	}()
+
+	const query = `
+		INSERT INTO scheduled_retries (
+			retry_id, request_id, channel, binding_set, available_at, claimed_at, last_error, triggered_by_attempt_number
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`
+	_, err = s.db.ExecContext(ctx, query,
+		retry.RetryID,
+		retry.RequestID,
+		retry.Channel,
+		retry.BindingSet,
+		retry.AvailableAt,
+		retry.ClaimedAt,
+		retry.LastError,
+		retry.TriggeredByAttemptNumber,
+	)
+	if err != nil {
+		return fmt.Errorf("insert scheduled retry: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListScheduledRetries(ctx context.Context, requestID string) (retries []notification.ScheduledRetry, err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("list_scheduled_retries", startedAt, err)
+	}()
+
+	query := `
+		SELECT retry_id, request_id, channel, binding_set, available_at, claimed_at, last_error,
+		       triggered_by_attempt_number, created_at, updated_at
+		FROM scheduled_retries
+	`
+	args := []any{}
+	if requestID != "" {
+		query += ` WHERE request_id = $1`
+		args = append(args, requestID)
+	}
+	query += ` ORDER BY available_at ASC, created_at ASC`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query scheduled retries: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			retry     notification.ScheduledRetry
+			claimedAt sql.NullTime
+		)
+		if err := rows.Scan(
+			&retry.RetryID,
+			&retry.RequestID,
+			&retry.Channel,
+			&retry.BindingSet,
+			&retry.AvailableAt,
+			&claimedAt,
+			&retry.LastError,
+			&retry.TriggeredByAttemptNumber,
+			&retry.CreatedAt,
+			&retry.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan scheduled retry: %w", err)
+		}
+		if claimedAt.Valid {
+			retry.ClaimedAt = &claimedAt.Time
+		}
+		retries = append(retries, retry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate scheduled retries: %w", err)
+	}
+	return retries, nil
+}
+
+func (s *Store) ClaimNextScheduledRetry(ctx context.Context) (retry notification.ScheduledRetry, err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("claim_next_scheduled_retry", startedAt, err)
+	}()
+
+	const query = `
+		WITH candidate AS (
+			SELECT retry_id
+			FROM scheduled_retries
+			WHERE available_at <= NOW()
+			  AND (claimed_at IS NULL OR claimed_at < NOW() - INTERVAL '5 minutes')
+			ORDER BY available_at ASC, created_at ASC
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE scheduled_retries sr
+		SET claimed_at = NOW(), updated_at = NOW()
+		FROM candidate
+		WHERE sr.retry_id = candidate.retry_id
+		RETURNING sr.retry_id, sr.request_id, sr.channel, sr.binding_set, sr.available_at, sr.claimed_at,
+		          sr.last_error, sr.triggered_by_attempt_number, sr.created_at, sr.updated_at
+	`
+
+	var claimedAt sql.NullTime
+	err = s.db.QueryRowContext(ctx, query).Scan(
+		&retry.RetryID,
+		&retry.RequestID,
+		&retry.Channel,
+		&retry.BindingSet,
+		&retry.AvailableAt,
+		&claimedAt,
+		&retry.LastError,
+		&retry.TriggeredByAttemptNumber,
+		&retry.CreatedAt,
+		&retry.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return notification.ScheduledRetry{}, ErrNotFound
+	}
+	if err != nil {
+		return notification.ScheduledRetry{}, fmt.Errorf("claim next scheduled retry: %w", err)
+	}
+	if claimedAt.Valid {
+		retry.ClaimedAt = &claimedAt.Time
+	}
+	return retry, nil
+}
+
+func (s *Store) ReleaseScheduledRetryClaim(ctx context.Context, retryID string) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("release_scheduled_retry_claim", startedAt, err)
+	}()
+
+	const query = `
+		UPDATE scheduled_retries
+		SET claimed_at = NULL, updated_at = NOW()
+		WHERE retry_id = $1
+	`
+	result, err := s.db.ExecContext(ctx, query, retryID)
+	if err != nil {
+		return fmt.Errorf("release scheduled retry claim: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteScheduledRetry(ctx context.Context, retryID string) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("delete_scheduled_retry", startedAt, err)
+	}()
+
+	const query = `DELETE FROM scheduled_retries WHERE retry_id = $1`
+	result, err := s.db.ExecContext(ctx, query, retryID)
+	if err != nil {
+		return fmt.Errorf("delete scheduled retry: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) CreateDeadLetterNotification(ctx context.Context, deadLetter notification.DeadLetterNotification) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("create_dead_letter_notification", startedAt, err)
+	}()
+
+	payloadJSON, err := json.Marshal(deadLetter.PayloadSnapshot)
+	if err != nil {
+		return fmt.Errorf("marshal dead letter payload snapshot: %w", err)
+	}
+
+	const query = `
+		INSERT INTO dead_letter_notifications (
+			dead_letter_id, request_id, channel, binding_set, connector_name, reason, attempt_count,
+			last_error, payload_snapshot, replay_request_id, replayed_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11)
+	`
+	_, err = s.db.ExecContext(ctx, query,
+		deadLetter.DeadLetterID,
+		deadLetter.RequestID,
+		deadLetter.Channel,
+		deadLetter.BindingSet,
+		deadLetter.ConnectorName,
+		deadLetter.Reason,
+		deadLetter.AttemptCount,
+		deadLetter.LastError,
+		string(payloadJSON),
+		deadLetter.ReplayRequestID,
+		deadLetter.ReplayedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("insert dead letter notification: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListDeadLetterNotifications(ctx context.Context, requestID string) (deadLetters []notification.DeadLetterNotification, err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("list_dead_letter_notifications", startedAt, err)
+	}()
+
+	query := `
+		SELECT dead_letter_id, request_id, channel, binding_set, connector_name, reason, attempt_count,
+		       last_error, payload_snapshot, replay_request_id, replayed_at, created_at, updated_at
+		FROM dead_letter_notifications
+	`
+	args := []any{}
+	if requestID != "" {
+		query += ` WHERE request_id = $1`
+		args = append(args, requestID)
+	}
+	query += ` ORDER BY created_at DESC`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query dead letter notifications: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			deadLetter      notification.DeadLetterNotification
+			payloadSnapshot []byte
+			replayedAt      sql.NullTime
+		)
+		if err := rows.Scan(
+			&deadLetter.DeadLetterID,
+			&deadLetter.RequestID,
+			&deadLetter.Channel,
+			&deadLetter.BindingSet,
+			&deadLetter.ConnectorName,
+			&deadLetter.Reason,
+			&deadLetter.AttemptCount,
+			&deadLetter.LastError,
+			&payloadSnapshot,
+			&deadLetter.ReplayRequestID,
+			&replayedAt,
+			&deadLetter.CreatedAt,
+			&deadLetter.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan dead letter notification: %w", err)
+		}
+		if len(payloadSnapshot) > 0 {
+			if err := json.Unmarshal(payloadSnapshot, &deadLetter.PayloadSnapshot); err != nil {
+				return nil, fmt.Errorf("unmarshal dead letter payload snapshot: %w", err)
+			}
+		}
+		if replayedAt.Valid {
+			deadLetter.ReplayedAt = &replayedAt.Time
+		}
+		deadLetters = append(deadLetters, deadLetter)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate dead letter notifications: %w", err)
+	}
+	return deadLetters, nil
+}
+
+func (s *Store) GetDeadLetterNotificationByID(ctx context.Context, deadLetterID string) (deadLetter notification.DeadLetterNotification, err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("get_dead_letter_notification_by_id", startedAt, err)
+	}()
+
+	const query = `
+		SELECT dead_letter_id, request_id, channel, binding_set, connector_name, reason, attempt_count,
+		       last_error, payload_snapshot, replay_request_id, replayed_at, created_at, updated_at
+		FROM dead_letter_notifications
+		WHERE dead_letter_id = $1
+		LIMIT 1
+	`
+	var (
+		payloadSnapshot []byte
+		replayedAt      sql.NullTime
+	)
+	err = s.db.QueryRowContext(ctx, query, deadLetterID).Scan(
+		&deadLetter.DeadLetterID,
+		&deadLetter.RequestID,
+		&deadLetter.Channel,
+		&deadLetter.BindingSet,
+		&deadLetter.ConnectorName,
+		&deadLetter.Reason,
+		&deadLetter.AttemptCount,
+		&deadLetter.LastError,
+		&payloadSnapshot,
+		&deadLetter.ReplayRequestID,
+		&replayedAt,
+		&deadLetter.CreatedAt,
+		&deadLetter.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return notification.DeadLetterNotification{}, ErrNotFound
+	}
+	if err != nil {
+		return notification.DeadLetterNotification{}, fmt.Errorf("query dead letter notification: %w", err)
+	}
+	if len(payloadSnapshot) > 0 {
+		if err := json.Unmarshal(payloadSnapshot, &deadLetter.PayloadSnapshot); err != nil {
+			return notification.DeadLetterNotification{}, fmt.Errorf("unmarshal dead letter payload snapshot: %w", err)
+		}
+	}
+	if replayedAt.Valid {
+		deadLetter.ReplayedAt = &replayedAt.Time
+	}
+	return deadLetter, nil
+}
+
+func (s *Store) MarkDeadLetterReplayed(ctx context.Context, deadLetterID string, replayRequestID string, replayedAt time.Time) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("mark_dead_letter_replayed", startedAt, err)
+	}()
+
+	const query = `
+		UPDATE dead_letter_notifications
+		SET replay_request_id = $2, replayed_at = $3, updated_at = NOW()
+		WHERE dead_letter_id = $1
+	`
+	result, err := s.db.ExecContext(ctx, query, deadLetterID, replayRequestID, replayedAt)
+	if err != nil {
+		return fmt.Errorf("mark dead letter replayed: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

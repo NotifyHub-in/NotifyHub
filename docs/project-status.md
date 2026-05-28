@@ -52,6 +52,15 @@ This file tracks what has been built so far in the notification control plane an
 - [x] Delivery policies with retries and backoff
   Why: transient send failures can be retried consistently without every client implementing its own retry logic.
 
+- [x] Scheduled retries with dead-letter and replay flow
+  Why: retry timing now survives worker restarts, permanently failed notifications are inspectable, and operators have a first-class way to replay exhausted requests safely.
+
+- [x] Connector error taxonomy and retry classification
+  Why: the worker can now distinguish transient failures from permanent or misconfigured ones, which means only retryable errors consume retry budget while invalid requests and bad credentials fail fast into DLQ with clearer reasons.
+
+- [x] Provider health state and circuit-breaker behavior
+  Why: repeated retryable provider failures now open a persisted circuit on the affected binding, which lets the worker skip unhealthy providers during cooldown windows and recover automatically after a successful probe instead of repeatedly hammering the same outage.
+
 - [x] Idempotency handling
   Why: duplicate client submissions do not create duplicate logical notifications, and conflicting replays are rejected cleanly.
 
@@ -95,12 +104,8 @@ Provider selection now works like this:
 
 ### Core Platform Hardening
 
-- [ ] Add dead-letter queue handling and replay tooling
-- [ ] Move retry timing off in-process sleeps to a scheduled/requeue-based retry model
-- [ ] Define a clearer connector capability and error taxonomy contract
 - [ ] Add stronger partial-failure semantics for multi-channel notification requests
 - [ ] Add request validation rules for channel-recipient compatibility
-- [ ] Add provider health state and circuit-breaker behavior
 - [ ] Add cleanup/retention jobs for old audit data and webhook attempts
 
 ### Security
@@ -118,6 +123,7 @@ Provider selection now works like this:
 
 - [ ] Add unit tests around routing, binding-set selection, retries, failover, preferences, expiry, and idempotency
 - [ ] Add integration tests for end-to-end provider flows and callback loops
+  Progress: a first live API integration harness now covers accepted requests, retry scheduling, and dead-letter replay against a running local stack, but callback-loop and broader provider-path coverage still need to be added.
 - [ ] Add chaos/failure tests for Kafka, Postgres, and connector failures
 - [ ] Define explicit delivery guarantees and replay semantics in docs
 - [ ] Add more robust queue partitioning and consumer scaling strategy
@@ -155,8 +161,8 @@ Provider selection now works like this:
 
 If we resume from here, the highest-value next sequence is:
 
-1. Authentication and secret management
-2. Real migration/versioning discipline
-3. Scheduled retries + DLQ + replay tooling
-4. Test coverage and CI hardening
-5. README/API docs/OSS packaging cleanup
+1. Test coverage and CI hardening
+2. Authentication and broader secret-management integration
+3. README/API docs/OSS packaging cleanup
+4. Deployment packaging beyond local Docker
+5. Deeper multi-channel and operator hardening

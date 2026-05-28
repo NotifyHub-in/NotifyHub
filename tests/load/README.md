@@ -6,6 +6,7 @@ This load test exercises the notification control plane with a mix of:
 - happy-path SMS notifications
 - happy-path webhook routing through stored policy
 - suppressed notifications through preference policy
+- scheduled retry, dead-letter, and replay flow through a temporary failing binding
 - render failures caused by missing template variables
 - unsupported channel requests
 - idempotent exact replays

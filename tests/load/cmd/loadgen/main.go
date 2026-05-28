@@ -63,6 +63,8 @@ type result struct {
 type requestDetailsResponse struct {
 	Request          notification.NotificationRecord       `json:"request"`
 	DeliveryAttempts []notification.DeliveryAttempt        `json:"delivery_attempts"`
+	ScheduledRetries []notification.ScheduledRetry         `json:"scheduled_retries"`
+	DeadLetters      []notification.DeadLetterNotification `json:"dead_letters"`
 	WebhookAttempts  []notification.WebhookDeliveryAttempt `json:"webhook_delivery_attempts"`
 }
 
@@ -183,6 +185,7 @@ func weightedScenarios() []scenario {
 		{name: "sms_happy", weight: 18, run: runSMSHappy},
 		{name: "routing_webhook_happy", weight: 14, run: runRoutedWebhookHappy},
 		{name: "suppressed_email", weight: 10, run: runSuppressedEmail},
+		{name: "retry_dlq_replay", weight: 6, run: runRetryDLQReplay},
 		{name: "missing_variable", weight: 8, run: runMissingVariable},
 		{name: "unsupported_channel", weight: 7, run: runUnsupportedChannel},
 		{name: "idempotent_replay", weight: 7, run: runIdempotentReplay},
@@ -283,6 +286,109 @@ func runSuppressedEmail(ctx context.Context, r *runner, _ int) result {
 		Priority: "low",
 	}
 	return r.submitAndMaybeCallback(ctx, "suppressed_email", req, false)
+}
+
+func runRetryDLQReplay(ctx context.Context, r *runner, workerID int) result {
+	start := time.Now()
+	bindingSet := fmt.Sprintf("loadtest-retry-%s-%d-%d", r.runID, workerID, r.nextID())
+
+	badBinding := notification.ProviderBindingUpsertRequest{
+		Channel:       notification.ChannelEmail,
+		BindingSet:    bindingSet,
+		ConnectorName: "connector-email-bad",
+		EndpointURL:   "http://connector-email-bad:8099",
+		Enabled:       true,
+		Priority:      10,
+	}
+	status, body, err := r.postJSON(ctx, http.MethodPost, r.cfg.apiBaseURL+"/v1/provider-bindings", badBinding)
+	if err != nil {
+		return result{scenario: "retry_dlq_replay", outcome: "binding_request_error", statusCode: status, duration: time.Since(start), err: err}
+	}
+	if status != http.StatusOK {
+		return result{scenario: "retry_dlq_replay", outcome: fmt.Sprintf("binding_status_%d", status), statusCode: status, duration: time.Since(start), err: fmt.Errorf("bad binding setup failed: %s", body)}
+	}
+
+	req := notification.NotificationRequest{
+		IdempotencyKey: r.newKey("load-retry-dlq"),
+		EventName:      "order.delayed",
+		TemplateKey:    "order-delayed-v1",
+		Channels:       []notification.Channel{notification.ChannelEmail},
+		BindingSet:     bindingSet,
+		Recipient: notification.Recipient{
+			UserID: fmt.Sprintf("user-retry-%d-%d", workerID, r.nextID()),
+			Email:  fmt.Sprintf("retry-%d@example.com", r.nextID()),
+		},
+		Variables: map[string]string{
+			"order_id": fmt.Sprintf("ORD-RETRY-%d", r.nextID()),
+			"reason":   "connector_down",
+		},
+		Metadata: map[string]string{
+			"scenario": "retry_dlq_replay",
+		},
+		Priority: "high",
+	}
+
+	status, body, err = r.postJSON(ctx, http.MethodPost, r.cfg.apiBaseURL+"/v1/notification-requests", req)
+	if err != nil {
+		return result{scenario: "retry_dlq_replay", outcome: "request_error", statusCode: status, duration: time.Since(start), err: err}
+	}
+	if status != http.StatusAccepted {
+		return result{scenario: "retry_dlq_replay", outcome: fmt.Sprintf("unexpected_submit_%d", status), statusCode: status, duration: time.Since(start), err: fmt.Errorf("submit failed: %s", body)}
+	}
+
+	var accepted notification.NotificationAccepted
+	if err := json.Unmarshal(body, &accepted); err != nil {
+		return result{scenario: "retry_dlq_replay", outcome: "decode_failed", statusCode: status, duration: time.Since(start), err: err}
+	}
+
+	details, err := r.waitForTerminalRequestDetails(ctx, accepted.RequestID, 80, 500*time.Millisecond)
+	if err != nil {
+		return result{scenario: "retry_dlq_replay", outcome: "wait_failed", statusCode: status, duration: time.Since(start), err: err}
+	}
+	if details.Request.Status != notification.RequestStatusFailed || len(details.DeadLetters) == 0 {
+		return result{scenario: "retry_dlq_replay", outcome: "dlq_missing", statusCode: status, duration: time.Since(start), err: fmt.Errorf("expected failed request with dead letter, got status=%s dead_letters=%d", details.Request.Status, len(details.DeadLetters))}
+	}
+
+	goodBinding := notification.ProviderBindingUpsertRequest{
+		Channel:       notification.ChannelEmail,
+		BindingSet:    bindingSet,
+		ConnectorName: "connector-email",
+		EndpointURL:   "http://connector-email:8091",
+		Enabled:       true,
+		Priority:      10,
+	}
+	status, body, err = r.postJSON(ctx, http.MethodPost, r.cfg.apiBaseURL+"/v1/provider-bindings", goodBinding)
+	if err != nil {
+		return result{scenario: "retry_dlq_replay", outcome: "binding_request_error", statusCode: status, duration: time.Since(start), err: err}
+	}
+	if status != http.StatusOK {
+		return result{scenario: "retry_dlq_replay", outcome: fmt.Sprintf("binding_fix_status_%d", status), statusCode: status, duration: time.Since(start), err: fmt.Errorf("good binding setup failed: %s", body)}
+	}
+
+	deadLetterID := details.DeadLetters[0].DeadLetterID
+	status, body, err = r.postRaw(ctx, http.MethodPost, r.cfg.apiBaseURL+"/v1/dead-letters/"+deadLetterID+"/replay", []byte("{}"))
+	if err != nil {
+		return result{scenario: "retry_dlq_replay", outcome: "replay_request_error", statusCode: status, duration: time.Since(start), err: err}
+	}
+	if status != http.StatusAccepted {
+		return result{scenario: "retry_dlq_replay", outcome: fmt.Sprintf("unexpected_replay_%d", status), statusCode: status, duration: time.Since(start), err: fmt.Errorf("replay failed: %s", body)}
+	}
+
+	var replayAccepted notification.NotificationAccepted
+	if err := json.Unmarshal(body, &replayAccepted); err != nil {
+		return result{scenario: "retry_dlq_replay", outcome: "replay_decode_failed", statusCode: status, duration: time.Since(start), err: err}
+	}
+
+	replayDetails, err := r.waitForRequestDetails(ctx, replayAccepted.RequestID)
+	if err != nil {
+		return result{scenario: "retry_dlq_replay", outcome: "replay_wait_failed", statusCode: status, duration: time.Since(start), err: err}
+	}
+	if len(replayDetails.DeliveryAttempts) == 0 {
+		return result{scenario: "retry_dlq_replay", outcome: "replay_attempt_missing", statusCode: status, duration: time.Since(start), err: fmt.Errorf("replay request produced no delivery attempts")}
+	}
+	r.maybeCallbackFromAccepted(ctx, replayAccepted, true)
+
+	return result{scenario: "retry_dlq_replay", outcome: "replayed", statusCode: http.StatusAccepted, duration: time.Since(start)}
 }
 
 func runMissingVariable(ctx context.Context, r *runner, workerID int) result {
@@ -523,6 +629,26 @@ func (r *runner) waitForRequestDetails(ctx context.Context, requestID string) (r
 		return requestDetailsResponse{}, err
 	}
 	return details, fmt.Errorf("request %s did not produce delivery attempts within polling window", requestID)
+}
+
+func (r *runner) waitForTerminalRequestDetails(ctx context.Context, requestID string, attempts int, interval time.Duration) (requestDetailsResponse, error) {
+	var details requestDetailsResponse
+	var err error
+	for attempt := 0; attempt < attempts; attempt++ {
+		details, err = r.fetchRequestDetails(ctx, requestID)
+		if err == nil && details.Request.Status != notification.RequestStatusAccepted && details.Request.Status != notification.RequestStatusProcessing {
+			return details, nil
+		}
+		select {
+		case <-ctx.Done():
+			return requestDetailsResponse{}, ctx.Err()
+		case <-time.After(interval):
+		}
+	}
+	if err != nil {
+		return requestDetailsResponse{}, err
+	}
+	return details, fmt.Errorf("request %s did not reach terminal status within polling window", requestID)
 }
 
 func (r *runner) fetchRequestDetails(ctx context.Context, requestID string) (requestDetailsResponse, error) {

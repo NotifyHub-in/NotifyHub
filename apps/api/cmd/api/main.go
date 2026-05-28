@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"time"
@@ -225,6 +226,58 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, saved)
+		})
+
+		mux.HandleFunc("GET /v1/provider-binding-health", func(w http.ResponseWriter, r *http.Request) {
+			healthRecords, err := store.ListProviderBindingHealth(r.Context())
+			if err != nil {
+				logger.Error("list provider binding health failed", "error", err)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider binding health"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"provider_binding_health": healthRecords})
+		})
+
+		mux.HandleFunc("GET /v1/provider-binding-health/{bindingID}", func(w http.ResponseWriter, r *http.Request) {
+			bindingID := r.PathValue("bindingID")
+			healthRecord, err := store.GetProviderBindingHealth(r.Context(), bindingID)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "provider binding health not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("get provider binding health failed", "error", err, "binding_id", bindingID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider binding health"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, healthRecord)
+		})
+
+		mux.HandleFunc("POST /v1/provider-binding-health/{bindingID}/reset", func(w http.ResponseWriter, r *http.Request) {
+			bindingID := r.PathValue("bindingID")
+			if err := store.ResetProviderBindingHealth(r.Context(), bindingID); errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "provider binding health not found"})
+				return
+			} else if err != nil {
+				logger.Error("reset provider binding health failed", "error", err, "binding_id", bindingID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reset provider binding health"})
+				return
+			}
+
+			healthRecord, err := store.GetProviderBindingHealth(r.Context(), bindingID)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusOK, map[string]any{
+					"binding_id": bindingID,
+					"status":     "reset",
+				})
+				return
+			}
+			if err != nil {
+				logger.Error("reload provider binding health failed", "error", err, "binding_id", bindingID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload provider binding health"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, healthRecord)
 		})
 
 		mux.HandleFunc("GET /v1/routing-policies", func(w http.ResponseWriter, r *http.Request) {
@@ -560,10 +613,132 @@ func main() {
 				return
 			}
 
+			scheduledRetries, err := store.ListScheduledRetries(r.Context(), requestID)
+			if err != nil {
+				logger.Error("list scheduled retries failed", "error", err, "request_id", requestID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load scheduled retries"})
+				return
+			}
+
+			deadLetters, err := store.ListDeadLetterNotifications(r.Context(), requestID)
+			if err != nil {
+				logger.Error("list dead letters failed", "error", err, "request_id", requestID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load dead letters"})
+				return
+			}
+
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"request":                   record,
 				"delivery_attempts":         attempts,
+				"scheduled_retries":         scheduledRetries,
+				"dead_letters":              deadLetters,
 				"webhook_delivery_attempts": webhookAttempts,
+			})
+		})
+
+		mux.HandleFunc("GET /v1/dead-letters", func(w http.ResponseWriter, r *http.Request) {
+			deadLetters, err := store.ListDeadLetterNotifications(r.Context(), "")
+			if err != nil {
+				registry.IncCounter("dead_letter_api_events_total", "Dead-letter API outcomes.", map[string]string{"action": "list", "outcome": "load_failed"})
+				logger.Error("list dead letters failed", "error", err)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load dead letters"})
+				return
+			}
+			registry.IncCounter("dead_letter_api_events_total", "Dead-letter API outcomes.", map[string]string{"action": "list", "outcome": "ok"})
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"dead_letters": deadLetters})
+		})
+
+		mux.HandleFunc("GET /v1/dead-letters/{deadLetterID}", func(w http.ResponseWriter, r *http.Request) {
+			deadLetterID := r.PathValue("deadLetterID")
+			deadLetter, err := store.GetDeadLetterNotificationByID(r.Context(), deadLetterID)
+			if errors.Is(err, postgres.ErrNotFound) {
+				registry.IncCounter("dead_letter_api_events_total", "Dead-letter API outcomes.", map[string]string{"action": "get", "outcome": "not_found"})
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "dead letter not found"})
+				return
+			}
+			if err != nil {
+				registry.IncCounter("dead_letter_api_events_total", "Dead-letter API outcomes.", map[string]string{"action": "get", "outcome": "load_failed"})
+				logger.Error("get dead letter failed", "error", err, "dead_letter_id", deadLetterID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load dead letter"})
+				return
+			}
+			registry.IncCounter("dead_letter_api_events_total", "Dead-letter API outcomes.", map[string]string{"action": "get", "outcome": "ok"})
+			httpx.WriteJSON(w, http.StatusOK, deadLetter)
+		})
+
+		mux.HandleFunc("POST /v1/dead-letters/{deadLetterID}/replay", func(w http.ResponseWriter, r *http.Request) {
+			deadLetterID := r.PathValue("deadLetterID")
+			deadLetter, err := store.GetDeadLetterNotificationByID(r.Context(), deadLetterID)
+			if errors.Is(err, postgres.ErrNotFound) {
+				registry.IncCounter("dead_letter_replay_api_events_total", "Dead-letter replay API outcomes.", map[string]string{"outcome": "dead_letter_not_found"})
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "dead letter not found"})
+				return
+			}
+			if err != nil {
+				registry.IncCounter("dead_letter_replay_api_events_total", "Dead-letter replay API outcomes.", map[string]string{"outcome": "dead_letter_load_failed"})
+				logger.Error("get dead letter for replay failed", "error", err, "dead_letter_id", deadLetterID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load dead letter"})
+				return
+			}
+
+			original, err := store.GetNotificationRequest(r.Context(), deadLetter.RequestID)
+			if errors.Is(err, postgres.ErrNotFound) {
+				registry.IncCounter("dead_letter_replay_api_events_total", "Dead-letter replay API outcomes.", map[string]string{"outcome": "original_request_not_found"})
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "original notification request not found"})
+				return
+			}
+			if err != nil {
+				registry.IncCounter("dead_letter_replay_api_events_total", "Dead-letter replay API outcomes.", map[string]string{"outcome": "original_request_load_failed"})
+				logger.Error("get original notification request for replay failed", "error", err, "request_id", deadLetter.RequestID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load original notification request"})
+				return
+			}
+
+			now := time.Now().UTC()
+			replayRecord := original
+			replayRecord.RequestID = id.New(12)
+			replayRecord.IdempotencyKey = fmt.Sprintf("%s-replay-%d", original.IdempotencyKey, now.UnixNano())
+			replayRecord.Status = notification.RequestStatusAccepted
+			replayRecord.RequestedAt = now
+			replayRecord.CreatedAt = time.Time{}
+			replayRecord.UpdatedAt = time.Time{}
+			if replayRecord.Metadata == nil {
+				replayRecord.Metadata = map[string]string{}
+			}
+			replayRecord.Metadata["replay_of_request_id"] = original.RequestID
+			replayRecord.Metadata["replay_of_dead_letter_id"] = deadLetter.DeadLetterID
+
+			if err := store.CreateNotificationRequest(r.Context(), replayRecord); err != nil {
+				registry.IncCounter("dead_letter_replay_api_events_total", "Dead-letter replay API outcomes.", map[string]string{"outcome": "create_failed"})
+				logger.Error("create replay notification request failed", "error", err, "dead_letter_id", deadLetterID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create replay notification request"})
+				return
+			}
+
+			if err := publisher.PublishJSON(r.Context(), replayRecord.RequestID, notification.DeliveryPlan{Request: replayRecord}); err != nil {
+				registry.IncCounter("dead_letter_replay_api_events_total", "Dead-letter replay API outcomes.", map[string]string{"outcome": "enqueue_failed"})
+				logger.Error("publish replay notification request failed", "error", err, "request_id", replayRecord.RequestID, "dead_letter_id", deadLetterID)
+				_ = store.UpdateNotificationRequestStatus(r.Context(), replayRecord.RequestID, notification.RequestStatusFailed)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "enqueue replay notification request"})
+				return
+			}
+
+			if err := store.MarkDeadLetterReplayed(r.Context(), deadLetterID, replayRecord.RequestID, now); err != nil {
+				registry.IncCounter("dead_letter_replay_api_events_total", "Dead-letter replay API outcomes.", map[string]string{"outcome": "mark_replayed_failed"})
+				logger.Error("mark dead letter replayed failed", "error", err, "dead_letter_id", deadLetterID, "replay_request_id", replayRecord.RequestID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "mark dead letter replayed"})
+				return
+			}
+
+			if err := notifier.NotifyRequestUpdated(r.Context(), replayRecord.RequestID, map[string]interface{}{"source": "api", "replay": true, "dead_letter_id": deadLetterID}); err != nil {
+				logger.Error("notify replay accepted lifecycle webhook failed", "error", err, "request_id", replayRecord.RequestID)
+			}
+
+			registry.IncCounter("dead_letter_replay_api_events_total", "Dead-letter replay API outcomes.", map[string]string{"outcome": "accepted"})
+			httpx.WriteJSON(w, http.StatusAccepted, notification.NotificationAccepted{
+				RequestID:  replayRecord.RequestID,
+				Status:     notification.RequestStatusAccepted,
+				AcceptedAt: now,
 			})
 		})
 

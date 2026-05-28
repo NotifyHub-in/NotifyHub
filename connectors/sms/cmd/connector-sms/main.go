@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/your-org/notification-control-plane/libs/contracts/notification"
@@ -33,7 +34,45 @@ func main() {
 		mux.HandleFunc("POST /v1/send", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.ConnectorSendRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
-				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid connector send payload"})
+				httpx.WriteJSON(w, http.StatusBadRequest, notification.ConnectorErrorResponse{
+					Error:          "invalid connector send payload",
+					Code:           "invalid_payload",
+					Classification: notification.FailureClassInvalidRequest,
+				})
+				return
+			}
+			if req.Destination == "" || !strings.HasPrefix(req.Destination, "+") {
+				httpx.WriteJSON(w, http.StatusBadRequest, notification.ConnectorErrorResponse{
+					Error:          "invalid phone destination",
+					Code:           "invalid_destination",
+					Classification: notification.FailureClassInvalidRequest,
+				})
+				return
+			}
+			if token := req.ProviderConfig["auth_token"]; token == "unauthorized" {
+				httpx.WriteJSON(w, http.StatusUnauthorized, notification.ConnectorErrorResponse{
+					Error:          "provider rejected sms credentials",
+					Code:           "invalid_credentials",
+					Classification: notification.FailureClassUnauthorized,
+				})
+				return
+			}
+			switch req.Metadata["simulate_failure"] {
+			case "rate_limit":
+				httpx.WriteJSON(w, http.StatusTooManyRequests, notification.ConnectorErrorResponse{
+					Error:          "sms provider rate limited the request",
+					Code:           "rate_limited",
+					Classification: notification.FailureClassRateLimited,
+					Retryable:      true,
+				})
+				return
+			case "provider_outage":
+				httpx.WriteJSON(w, http.StatusBadGateway, notification.ConnectorErrorResponse{
+					Error:          "sms provider temporary outage",
+					Code:           "provider_outage",
+					Classification: notification.FailureClassTransient,
+					Retryable:      true,
+				})
 				return
 			}
 			httpx.WriteJSON(w, http.StatusAccepted, notification.ConnectorSendResponse{

@@ -1,12 +1,18 @@
 COMPOSE_FILE := deployments/docker/compose.yml
 
-.PHONY: test fmt migrate run-api run-worker run-callback up down logs ps config load-test
+.PHONY: test fmt fmt-check integration-test migrate run-api run-worker run-callback up down logs ps config load-test
 
 test:
 	go test ./...
 
 fmt:
 	go fmt ./...
+
+fmt-check:
+	@test -z "$$(gofmt -l .)" || (echo "These files need gofmt:" && gofmt -l . && exit 1)
+
+integration-test:
+	RUN_INTEGRATION=1 go test ./tests/integration/...
 
 migrate:
 	go run ./apps/migrate/cmd/migrate
