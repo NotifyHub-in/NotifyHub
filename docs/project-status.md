@@ -91,6 +91,18 @@ This file tracks what has been built so far in the notification control plane an
 - [x] Default binding-set fallback
   Why: if no binding set is provided, the platform still behaves predictably by using default channel bindings instead of forcing every request to specify a group.
 
+- [x] Worker unit-test coverage foundation
+  Why: the worker’s core helper decisions around retry classification, provider config resolution, and circuit-skip behavior now have automated test coverage, which makes reliability changes safer.
+
+- [x] Live integration-test foundation
+  Why: the local stack is now exercised through real request lifecycle tests covering accepted requests, retry scheduling, dead-letter replay, callback normalization, failover, and circuit-open skip behavior.
+
+- [x] Basic CI workflow for formatting and Go tests
+  Why: the repo now has a baseline GitHub Actions gate for formatting and `go test`, which reduces the chance of obvious regressions landing silently.
+
+- [x] Core documentation bundle
+  Why: the repo now has a complete first-pass docs set covering architecture, operations, extension points, examples, roadmap, and architecture decisions instead of relying on scattered explanations across conversations.
+
 ## Current Selection Rules
 
 Provider selection now works like this:
@@ -145,7 +157,9 @@ Provider selection now works like this:
 - [ ] Add environment-specific configuration strategy beyond local Docker
 - [ ] Add Kubernetes manifests / Helm or equivalent production deployment packaging
 - [ ] Add release versioning and changelog discipline
-- [ ] Add CI checks for tests, formatting, and image builds
+- [x] Add basic CI checks for tests and formatting
+  Why: the repo now runs a baseline GitHub Actions workflow for format checking and the normal Go test suite.
+- [ ] Add CI checks for image builds and broader release validation
 - [ ] Add image publishing and release automation
 
 ### OSS And Product Readiness
@@ -169,8 +183,8 @@ Provider selection now works like this:
 
 If we resume from here, the highest-value next sequence is:
 
-1. Test coverage and CI hardening
-2. Authentication and broader secret-management integration
-3. README/API docs/OSS packaging cleanup
-4. Deployment packaging beyond local Docker
-5. Deeper multi-channel and operator hardening
+1. Authentication and broader secret-management integration
+2. Deployment packaging beyond local Docker
+3. Deeper test, chaos, and scaling hardening
+4. Alerting, tracing, and operator runbook maturity
+5. Multi-channel and production-behavior hardening
