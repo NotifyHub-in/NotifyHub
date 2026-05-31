@@ -1,8 +1,8 @@
 # Connector Integration Guide
 
-This project currently uses a connector pattern rather than a published reusable SDK package. The reference connectors in [connectors](/Users/Shaik/notifications/notification-control-plane/connectors) are the best implementation examples today.
+This project currently uses a connector pattern rather than a published reusable SDK package. The reference connectors in [connectors](/Users/Shaik/notifications/notification-control-plane/connectors) are the best implementation examples today, and the target product direction is for the platform to ship first-party connectors for the standard channels and providers.
 
-This guide describes the contract and expectations for building a new connector.
+This guide describes the contract and expectations for building a new connector or adapter.
 
 ## What A Connector Is
 
@@ -142,6 +142,19 @@ Error message text can evolve, but classification should stay stable. The worker
 4. Add a Docker service entry in [deployments/docker/compose.yml](/Users/Shaik/notifications/notification-control-plane/deployments/docker/compose.yml) if you want it in the local stack.
 5. Add provider bindings through the API that point to the connector.
 6. Add integration and load-test coverage for the new delivery path.
+
+## Product Direction
+
+For the standard channels and common third-party providers, the platform should own the connectors and provider adapters.
+
+Clients should only have to:
+
+- register provider accounts
+- provide non-secret configuration values
+- store secret references securely during onboarding or deployment
+- choose routing and binding policies
+
+Clients should only build custom connectors when a provider is not supported yet or a very specialized integration is needed.
 
 ## Recommended Future Work
 

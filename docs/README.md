@@ -8,6 +8,12 @@ This directory collects the important docs for the notification control plane in
   Product overview, quick start, local URLs, testing commands, and examples.
 - [Architecture](/Users/Shaik/notifications/notification-control-plane/docs/architecture/v1.md)
   Current runtime design, data model, delivery flow, and system boundaries.
+- [System Dock](/Users/Shaik/notifications/notification-control-plane/docs/architecture/system-dock.md)
+  Big-picture architecture map, module placement, and end-to-end data flow.
+- [Managed Provider Platform Design](/Users/Shaik/notifications/notification-control-plane/docs/architecture/managed-provider-platform.md)
+  Target architecture for first-party connectors, provider accounts, secure secret references, and runtime secret resolution.
+- [Managed Provider Platform Implementation Plan](/Users/Shaik/notifications/notification-control-plane/docs/architecture/managed-provider-platform-implementation-plan.md)
+  Phased rollout plan covering storage, API, worker, connectors, callbacks, security, and migration milestones.
 - [OpenAPI Contract](/Users/Shaik/notifications/notification-control-plane/docs/api/openapi.yaml)
   Current API surface and resource schemas.
 - [Project Status](/Users/Shaik/notifications/notification-control-plane/docs/project-status.md)
@@ -26,6 +32,8 @@ This directory collects the important docs for the notification control plane in
   How to add a new connector, expected request/response shape, and operational guard rails.
 - [Example Client Integrations](/Users/Shaik/notifications/notification-control-plane/examples)
   Northbound usage examples for transactional email, OTP SMS, and operational webhook alerts.
+- [Integration Guides](/Users/Shaik/notifications/notification-control-plane/docs/integrations/README.md)
+  End-to-end service integration notes, including the communication-engine multi-channel mapping.
 
 ## Architecture Decisions
 
