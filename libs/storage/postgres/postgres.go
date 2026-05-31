@@ -435,11 +435,12 @@ func (s *Store) UpsertProviderBinding(ctx context.Context, binding notification.
 
 	const query = `
 		INSERT INTO provider_bindings (
-			binding_id, channel, binding_set, connector_name, endpoint_url, config_refs, enabled, priority
-		) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
+			binding_id, channel, binding_set, connector_name, endpoint_url, provider_account_id, config_refs, enabled, priority
+		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
 		ON CONFLICT (channel, binding_set, connector_name)
 		DO UPDATE SET
 			endpoint_url = EXCLUDED.endpoint_url,
+			provider_account_id = EXCLUDED.provider_account_id,
 			config_refs = EXCLUDED.config_refs,
 			enabled = EXCLUDED.enabled,
 			priority = EXCLUDED.priority,
@@ -452,6 +453,7 @@ func (s *Store) UpsertProviderBinding(ctx context.Context, binding notification.
 		binding.BindingSet,
 		binding.ConnectorName,
 		binding.EndpointURL,
+		nullString(binding.ProviderAccountID),
 		string(configRefsJSON),
 		binding.Enabled,
 		binding.Priority,
@@ -464,7 +466,7 @@ func (s *Store) UpsertProviderBinding(ctx context.Context, binding notification.
 
 func (s *Store) ListProviderBindings(ctx context.Context) ([]notification.ProviderBinding, error) {
 	const query = `
-		SELECT binding_id, channel, binding_set, connector_name, endpoint_url, config_refs, enabled, priority, created_at, updated_at
+		SELECT binding_id, channel, binding_set, connector_name, endpoint_url, provider_account_id, config_refs, enabled, priority, created_at, updated_at
 		FROM provider_bindings
 		ORDER BY priority ASC, channel ASC, binding_set ASC
 	`
@@ -487,6 +489,7 @@ func (s *Store) ListProviderBindings(ctx context.Context) ([]notification.Provid
 			&binding.BindingSet,
 			&binding.ConnectorName,
 			&binding.EndpointURL,
+			&binding.ProviderAccountID,
 			&configRefsJSON,
 			&binding.Enabled,
 			&binding.Priority,
@@ -532,6 +535,7 @@ func (s *Store) ListProviderBindingsByChannel(ctx context.Context, channel notif
 				&binding.BindingSet,
 				&binding.ConnectorName,
 				&binding.EndpointURL,
+				&binding.ProviderAccountID,
 				&configRefsJSON,
 				&binding.Enabled,
 				&binding.Priority,
@@ -553,7 +557,7 @@ func (s *Store) ListProviderBindingsByChannel(ctx context.Context, channel notif
 	}
 
 	baseQuery := `
-		SELECT binding_id, channel, binding_set, connector_name, endpoint_url, config_refs, enabled, priority, created_at, updated_at
+		SELECT binding_id, channel, binding_set, connector_name, endpoint_url, provider_account_id, config_refs, enabled, priority, created_at, updated_at
 		FROM provider_bindings
 		WHERE channel = $1 AND enabled = TRUE
 	`
@@ -612,6 +616,13 @@ func (s *Store) GetProviderBindingByChannel(ctx context.Context, channel notific
 		return notification.ProviderBinding{}, err
 	}
 	return bindings[0], nil
+}
+
+func nullString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func (s *Store) UpsertProviderBindingHealth(ctx context.Context, health notification.ProviderBindingHealth) (err error) {

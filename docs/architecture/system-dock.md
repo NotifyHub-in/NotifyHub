@@ -35,10 +35,12 @@ flowchart LR
     C1["Connector email"]
     C2["Connector sms"]
     C3["Connector webhook"]
+    C4["Connector push"]
     CP["Callback gateway"]
     EP1["External email provider"]
     EP2["External SMS provider"]
     EP3["External webhook target"]
+    EP4["External push provider"]
     VW["Lifecycle webhooks"]
     OBS["Prometheus / Grafana / Kafka UI / Adminer"]
 
@@ -50,9 +52,11 @@ flowchart LR
     W --> C1
     W --> C2
     W --> C3
+    W --> C4
     C1 --> EP1
     C2 --> EP2
     C3 --> EP3
+    C4 --> EP4
     EP1 --> CP
     EP2 --> CP
     EP3 --> CP
@@ -68,6 +72,7 @@ flowchart LR
     OBS --- C1
     OBS --- C2
     OBS --- C3
+    OBS --- C4
 ```
 
 ## Request Lifecycle
@@ -133,6 +138,7 @@ sequenceDiagram
 - `connectors/email`
 - `connectors/sms`
 - `connectors/webhook`
+- `connectors/push`
 - Normalize outbound transport and provider failure semantics
 
 ### Shared platform libraries

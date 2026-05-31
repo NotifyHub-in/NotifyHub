@@ -171,8 +171,10 @@ services:
       CONNECTOR_WEBHOOK_URL: http://connector-webhook:8093
       CONNECTOR_EMAIL_URL: http://connector-email:8091
       CONNECTOR_SMS_URL: http://connector-sms:8092
+      CONNECTOR_PUSH_URL: http://connector-push:8094
       EMAIL_PROVIDER_API_KEY_DEMO: demo-email-provider-key
       SMS_PROVIDER_AUTH_TOKEN_DEMO: demo-sms-provider-token
+      PUSH_PROVIDER_SERVICE_ACCOUNT_JSON_DEMO: '{"access_token":"demo-push-provider-token"}'
       WEBHOOK_PROVIDER_SHARED_SECRET_DEMO: demo-webhook-shared-secret
     depends_on:
       migrate:
@@ -184,6 +186,8 @@ services:
       connector-email:
         condition: service_started
       connector-sms:
+        condition: service_started
+      connector-push:
         condition: service_started
     ports:
       - "8081:8081"
@@ -197,6 +201,7 @@ services:
       APP_VERSION: dev
       PORT: 8082
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/notification_control_plane?sslmode=disable
+      CALLBACK_PROVIDER_SECRET_DEMO: demo-callback-secret
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -240,6 +245,17 @@ services:
       PORT: 8093
     ports:
       - "8093:8093"
+
+  connector-push:
+    build:
+      context: ../..
+      dockerfile: build/docker/connector-push.Dockerfile
+    environment:
+      APP_ENV: local
+      APP_VERSION: dev
+      PORT: 8094
+    ports:
+      - "8094:8094"
 
 volumes:
   postgres_data:

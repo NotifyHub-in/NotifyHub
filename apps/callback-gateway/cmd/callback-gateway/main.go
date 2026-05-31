@@ -2,7 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +17,7 @@ import (
 	"github.com/your-org/notification-control-plane/libs/core/app"
 	"github.com/your-org/notification-control-plane/libs/core/config"
 	"github.com/your-org/notification-control-plane/libs/core/httpx"
+	"github.com/your-org/notification-control-plane/libs/core/secrets"
 	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
 	"github.com/your-org/notification-control-plane/libs/core/webhooks"
 	"github.com/your-org/notification-control-plane/libs/observability/logging"
@@ -45,8 +52,29 @@ func main() {
 				return
 			}
 
+			rawBody, err := io.ReadAll(r.Body)
+			if err != nil {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "read_failed"})
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "read callback payload"})
+				return
+			}
+
+			route, routeErr := store.GetCallbackRouteByProviderKey(r.Context(), parts[0])
+			if routeErr == nil && route.Enabled {
+				if ok, verifyErr := verifyCallbackRequest(r, rawBody, route); verifyErr != nil {
+					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "verification_failed"})
+					logger.Error("verify provider callback failed", "error", verifyErr, "provider", parts[0], "provider_account_id", route.ProviderAccountID)
+					httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "callback verification failed"})
+					return
+				} else if !ok {
+					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "verification_failed"})
+					httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "callback verification failed"})
+					return
+				}
+			}
+
 			var payload notification.ProviderCallback
-			if err := httpx.DecodeJSON(r, &payload); err != nil {
+			if err := json.Unmarshal(rawBody, &payload); err != nil {
 				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "invalid_payload"})
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid callback payload"})
 				return
@@ -129,6 +157,33 @@ func main() {
 	})
 	if err != nil {
 		panic(err)
+	}
+}
+
+func verifyCallbackRequest(r *http.Request, rawBody []byte, route notification.CallbackRoute) (bool, error) {
+	if route.VerificationMode == "" || route.VerificationMode == notification.CallbackVerificationModeNone {
+		return true, nil
+	}
+
+	secret, err := secrets.Resolve(route.VerificationSecretRef)
+	if err != nil {
+		return false, err
+	}
+
+	switch route.VerificationMode {
+	case notification.CallbackVerificationModeSharedSecret:
+		return r.Header.Get("X-Provider-Secret") == secret, nil
+	case notification.CallbackVerificationModeHMACSHA256:
+		signature := strings.TrimSpace(r.Header.Get("X-Provider-Signature"))
+		if signature == "" {
+			return false, nil
+		}
+		mac := hmac.New(sha256.New, []byte(secret))
+		_, _ = mac.Write(rawBody)
+		expected := hex.EncodeToString(mac.Sum(nil))
+		return hmac.Equal([]byte(signature), []byte(expected)), nil
+	default:
+		return false, fmt.Errorf("unsupported verification mode %q", route.VerificationMode)
 	}
 }
 

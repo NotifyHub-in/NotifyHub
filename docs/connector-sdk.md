@@ -139,6 +139,7 @@ Error message text can evolve, but classification should stay stable. The worker
    - [connectors/email/cmd/connector-email/main.go](/Users/Shaik/notifications/notification-control-plane/connectors/email/cmd/connector-email/main.go)
    - [connectors/sms/cmd/connector-sms/main.go](/Users/Shaik/notifications/notification-control-plane/connectors/sms/cmd/connector-sms/main.go)
    - [connectors/webhook/cmd/connector-webhook/main.go](/Users/Shaik/notifications/notification-control-plane/connectors/webhook/cmd/connector-webhook/main.go)
+   - [connectors/push/cmd/connector-push/main.go](/Users/Shaik/notifications/notification-control-plane/connectors/push/cmd/connector-push/main.go)
 4. Add a Docker service entry in [deployments/docker/compose.yml](/Users/Shaik/notifications/notification-control-plane/deployments/docker/compose.yml) if you want it in the local stack.
 5. Add provider bindings through the API that point to the connector.
 6. Add integration and load-test coverage for the new delivery path.

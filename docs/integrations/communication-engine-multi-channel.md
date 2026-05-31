@@ -103,6 +103,13 @@ The control plane then decides:
 - the worker calls the push connector
 - the push provider returns acceptance or failure, and later callbacks update durable state
 
+### Webhook
+
+- `communication-engine` can still emit notification-intent events that ultimately target webhook delivery
+- the worker calls the first-party webhook connector
+- the webhook connector posts the normalized payload to the customer-owned webhook URL
+- callback normalization happens through the same control-plane path when the provider exposes delivery lifecycle events
+
 ## How Multiple Providers Fit In
 
 If a single channel has multiple providers, the control plane does **not** need a separate API shape for each provider.
@@ -165,6 +172,7 @@ For example:
 - SMS can use one or more configured SMS provider accounts such as Twilio, Gupshup, or Karix
 - WhatsApp can use a configured WhatsApp provider account
 - push can use a configured FCM or APNs provider account
+- webhook can use a managed connector that posts to customer-owned callback URLs
 
 ## Bottom Line
 

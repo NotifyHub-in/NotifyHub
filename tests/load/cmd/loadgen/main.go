@@ -415,12 +415,12 @@ func runUnsupportedChannel(ctx context.Context, r *runner, workerID int) result 
 		IdempotencyKey: r.newKey("load-unsupported"),
 		EventName:      "order.delayed",
 		TemplateKey:    "order-delayed-v1",
-		Channels:       []notification.Channel{"push"},
+		Channels:       []notification.Channel{"whatsapp"},
 		Recipient: notification.Recipient{
-			UserID: fmt.Sprintf("user-push-%d-%d", workerID, r.nextID()),
+			UserID: fmt.Sprintf("user-whatsapp-%d-%d", workerID, r.nextID()),
 		},
 		Variables: map[string]string{
-			"order_id": fmt.Sprintf("ORD-PUSH-%d", r.nextID()),
+			"order_id": fmt.Sprintf("ORD-WHATSAPP-%d", r.nextID()),
 		},
 		Metadata: map[string]string{
 			"scenario": "unsupported_channel",

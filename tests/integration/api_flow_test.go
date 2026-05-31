@@ -35,6 +35,17 @@ type providerBindingHealthResponse struct {
 	ConsecutiveFailures int                               `json:"consecutive_failures"`
 }
 
+type providerAccountsResponse struct {
+	ProviderAccounts []notification.ProviderAccount `json:"provider_accounts"`
+}
+
+type providerAccountStatusResponse struct {
+	ProviderAccount  notification.ProviderAccount         `json:"provider_account"`
+	ProviderBindings []notification.ProviderBinding       `json:"provider_bindings"`
+	BindingHealth    []notification.ProviderBindingHealth `json:"binding_health"`
+	CallbackRoute    *notification.CallbackRoute          `json:"callback_route,omitempty"`
+}
+
 func TestNotificationRequestAcceptedFlow(t *testing.T) {
 	client := requireIntegrationClient(t)
 
@@ -105,6 +116,157 @@ func TestProviderCallbackMarksDelivered(t *testing.T) {
 	})
 	if delivered.DeliveryAttempts[0].Status != notification.DeliveryAttemptDelivered {
 		t.Fatalf("delivery attempt status = %q, want %q", delivered.DeliveryAttempts[0].Status, notification.DeliveryAttemptDelivered)
+	}
+}
+
+func TestProviderCallbackVerificationWithRoute(t *testing.T) {
+	client := requireIntegrationClient(t)
+	account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+		TenantID:    "communication-engine",
+		ProviderKey: "sendgrid-email",
+		DisplayName: "SendGrid Email Callback Demo",
+		Channel:     notification.ChannelEmail,
+		Enabled:     true,
+		Config: map[string]string{
+			"from_email": "noreply@example.com",
+		},
+		SecretRefs: map[string]notification.SecretReference{
+			"api_key": {
+				Ref:          "EMAIL_PROVIDER_API_KEY_DEMO",
+				MaterialType: notification.MaterialTypeSecretString,
+				Source:       "env",
+			},
+		},
+	})
+	route := createCallbackRoute(t, client, notification.CallbackRouteUpsertRequest{
+		ProviderKey:       "email",
+		ProviderAccountID: account.ProviderAccountID,
+		CallbackPath:      "/v1/providers/email/callbacks",
+		VerificationMode:  notification.CallbackVerificationModeSharedSecret,
+		VerificationSecretRef: notification.SecretReference{
+			Ref:          "CALLBACK_PROVIDER_SECRET_DEMO",
+			MaterialType: notification.MaterialTypeSecretString,
+			Source:       "env",
+		},
+		Enabled: true,
+	})
+	if route.ProviderKey != "email" {
+		t.Fatalf("route provider_key = %q, want %q", route.ProviderKey, "email")
+	}
+
+	req := notification.NotificationRequest{
+		IdempotencyKey: uniqueKey("it-callback-managed"),
+		EventName:      "order.delayed",
+		TemplateKey:    "order-delayed-v1",
+		Channels:       []notification.Channel{notification.ChannelEmail},
+		Recipient: notification.Recipient{
+			UserID: "it-user-callback-managed",
+			Email:  "integration-callback-managed@example.com",
+		},
+		Variables: map[string]string{
+			"order_id": "IT-ORD-CB-MANAGED",
+			"reason":   "route_verification",
+		},
+	}
+
+	accepted := postNotificationRequest(t, client, req)
+	details := waitForTerminalRequest(t, client, accepted.RequestID, 15, 1*time.Second)
+	if len(details.DeliveryAttempts) == 0 {
+		t.Fatal("expected at least one delivery attempt before verified callback")
+	}
+
+	postProviderCallbackWithHeaders(t, client, "email", notification.ProviderCallback{
+		ProviderMessageID: details.DeliveryAttempts[0].ProviderMessageID,
+		Status:            "delivered",
+	}, map[string]string{
+		"X-Provider-Secret": "demo-callback-secret",
+	})
+
+	delivered := waitForRequestCondition(t, client, accepted.RequestID, 15, 1*time.Second, func(details requestDetailsResponse) bool {
+		return details.Request.Status == notification.RequestStatusDelivered
+	})
+	if delivered.DeliveryAttempts[0].Status != notification.DeliveryAttemptDelivered {
+		t.Fatalf("delivery attempt status = %q, want %q", delivered.DeliveryAttempts[0].Status, notification.DeliveryAttemptDelivered)
+	}
+}
+
+func TestManagedPushDeliveryAccepted(t *testing.T) {
+	client := requireIntegrationClient(t)
+
+	upsertTemplate(t, client, notification.TemplateUpsertRequest{
+		TemplateKey:     "push-notification-v1",
+		Channel:         notification.ChannelPush,
+		SubjectTemplate: "Push notice for {{user_id}}",
+		BodyTemplate:    "Push body for {{user_id}} and {{event_id}}.",
+		Enabled:         true,
+	})
+	upsertRoutingPolicy(t, client, notification.RoutingPolicyUpsertRequest{
+		EventName: "push.event.requested",
+		Channels:  []notification.Channel{notification.ChannelPush},
+		Enabled:   true,
+		Priority:  100,
+	})
+
+	account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+		TenantID:    "communication-engine",
+		ProviderKey: "fcm-push",
+		DisplayName: "FCM Push Demo",
+		Channel:     notification.ChannelPush,
+		Enabled:     true,
+		Config: map[string]string{
+			"project_id": "demo-project",
+			"base_url":   "http://webhook-sink:8080",
+		},
+		SecretRefs: map[string]notification.SecretReference{
+			"service_account_json": {
+				Ref:          "PUSH_PROVIDER_SERVICE_ACCOUNT_JSON_DEMO",
+				MaterialType: notification.MaterialTypeSecretJSON,
+				Source:       "env",
+			},
+		},
+	})
+	createdBinding := createProviderBinding(t, client, notification.ProviderBindingUpsertRequest{
+		Channel:           notification.ChannelPush,
+		ProviderAccountID: account.ProviderAccountID,
+		EndpointURL:       "http://connector-push:8094",
+		Enabled:           true,
+		Priority:          100,
+	})
+	if createdBinding.ConnectorName != "connector-push" {
+		t.Fatalf("connector_name = %q, want %q", createdBinding.ConnectorName, "connector-push")
+	}
+
+	req := notification.NotificationRequest{
+		IdempotencyKey: uniqueKey("it-push"),
+		EventName:      "push.event.requested",
+		TemplateKey:    "push-notification-v1",
+		Channels:       []notification.Channel{notification.ChannelPush},
+		Recipient: notification.Recipient{
+			UserID: "it-user-push",
+			Topic:  "push-news",
+		},
+		Variables: map[string]string{
+			"user_id":  "it-user-push",
+			"event_id": "push-001",
+		},
+	}
+
+	accepted := postNotificationRequest(t, client, req)
+	details := waitForTerminalRequest(t, client, accepted.RequestID, 20, 1*time.Second)
+	if details.Request.Status != notification.RequestStatusDispatched {
+		t.Fatalf("request status = %q, want %q", details.Request.Status, notification.RequestStatusDispatched)
+	}
+	if len(details.DeliveryAttempts) == 0 {
+		t.Fatal("expected a delivery attempt for push")
+	}
+	if details.DeliveryAttempts[0].ConnectorName != "connector-push" {
+		t.Fatalf("connector = %q, want %q", details.DeliveryAttempts[0].ConnectorName, "connector-push")
+	}
+	if details.DeliveryAttempts[0].Status != notification.DeliveryAttemptAccepted {
+		t.Fatalf("delivery attempt status = %q, want %q", details.DeliveryAttempts[0].Status, notification.DeliveryAttemptAccepted)
+	}
+	if details.DeliveryAttempts[0].ProviderMessageID == "" {
+		t.Fatal("expected provider message id for push delivery")
 	}
 }
 
@@ -236,6 +398,222 @@ func TestBindingSetFailoverAcceptsOnBackupConnector(t *testing.T) {
 	last := details.DeliveryAttempts[len(details.DeliveryAttempts)-1]
 	if last.ConnectorName != "connector-email" || last.Status != notification.DeliveryAttemptAccepted {
 		t.Fatalf("last failover attempt = %+v, want accepted connector-email", last)
+	}
+}
+
+func TestProviderAccountLifecycle(t *testing.T) {
+	client := requireIntegrationClient(t)
+
+	defs := getProviderDefinitions(t, client)
+	if !hasProviderDefinition(defs, "twilio-sms") {
+		t.Fatal("expected provider definitions to include twilio-sms")
+	}
+
+	tenantID := uniqueKey("tenant-provider-account")
+	created := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+		TenantID:    tenantID,
+		ProviderKey: "twilio-sms",
+		DisplayName: "Twilio SMS Production",
+		Channel:     notification.ChannelSMS,
+		Enabled:     true,
+		Config: map[string]string{
+			"from_number": "+14155550123",
+		},
+		SecretRefs: map[string]notification.SecretReference{
+			"account_sid": {
+				Ref:          "secret://tenant/" + tenantID + "/twilio/account-sid",
+				MaterialType: notification.MaterialTypeSecretString,
+				Version:      "current",
+				Source:       "vault",
+			},
+			"auth_token": {
+				Ref:          "secret://tenant/" + tenantID + "/twilio/auth-token",
+				MaterialType: notification.MaterialTypeSecretString,
+				Version:      "current",
+				Source:       "vault",
+			},
+		},
+	})
+	if created.ProviderAccountID == "" {
+		t.Fatal("expected provider_account_id to be populated")
+	}
+	if created.DisplayName != "Twilio SMS Production" {
+		t.Fatalf("display_name = %q, want %q", created.DisplayName, "Twilio SMS Production")
+	}
+	if created.ProviderKey != "twilio-sms" {
+		t.Fatalf("provider_key = %q, want %q", created.ProviderKey, "twilio-sms")
+	}
+	if created.Config["from_number"] != "+14155550123" {
+		t.Fatalf("from_number = %q, want %q", created.Config["from_number"], "+14155550123")
+	}
+	if created.SecretRefs["account_sid"].MaterialType != notification.MaterialTypeSecretString {
+		t.Fatalf("secret material_type = %q, want %q", created.SecretRefs["account_sid"].MaterialType, notification.MaterialTypeSecretString)
+	}
+
+	listed := listProviderAccounts(t, client, tenantID)
+	if len(listed) != 1 {
+		t.Fatalf("provider account list length = %d, want 1", len(listed))
+	}
+	if listed[0].ProviderAccountID != created.ProviderAccountID {
+		t.Fatalf("listed provider_account_id = %q, want %q", listed[0].ProviderAccountID, created.ProviderAccountID)
+	}
+
+	loaded := getProviderAccount(t, client, created.ProviderAccountID)
+	if loaded.ProviderAccountID != created.ProviderAccountID {
+		t.Fatalf("loaded provider_account_id = %q, want %q", loaded.ProviderAccountID, created.ProviderAccountID)
+	}
+
+	updatedName := "Twilio SMS Production v2"
+	patched := patchProviderAccount(t, client, created.ProviderAccountID, notification.ProviderAccountPatchRequest{
+		DisplayName: &updatedName,
+	})
+	if patched.DisplayName != updatedName {
+		t.Fatalf("patched display_name = %q, want %q", patched.DisplayName, updatedName)
+	}
+
+	disabled := disableProviderAccount(t, client, created.ProviderAccountID)
+	if disabled.Enabled {
+		t.Fatal("expected provider account to be disabled")
+	}
+}
+
+func TestManagedProviderAccountDeliversThroughBinding(t *testing.T) {
+	client := requireIntegrationClient(t)
+	bindingSet := uniqueKey("it-managed-provider")
+
+	account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+		TenantID:    "communication-engine",
+		ProviderKey: "sendgrid-email",
+		DisplayName: "SendGrid Email Demo",
+		Channel:     notification.ChannelEmail,
+		Enabled:     true,
+		Config: map[string]string{
+			"from_email": "noreply@example.com",
+		},
+		SecretRefs: map[string]notification.SecretReference{
+			"api_key": {
+				Ref:          "EMAIL_PROVIDER_API_KEY_DEMO",
+				MaterialType: notification.MaterialTypeSecretString,
+				Source:       "env",
+			},
+		},
+	})
+
+	upsertProviderBinding(t, client, notification.ProviderBindingUpsertRequest{
+		Channel:           notification.ChannelEmail,
+		BindingSet:        bindingSet,
+		ConnectorName:     "connector-email",
+		EndpointURL:       "http://connector-email:8091",
+		ProviderAccountID: account.ProviderAccountID,
+		Enabled:           true,
+		Priority:          10,
+	})
+
+	req := notification.NotificationRequest{
+		IdempotencyKey: uniqueKey("it-managed-provider-send"),
+		EventName:      "order.delayed",
+		TemplateKey:    "order-delayed-v1",
+		Channels:       []notification.Channel{notification.ChannelEmail},
+		BindingSet:     bindingSet,
+		Recipient: notification.Recipient{
+			UserID: "it-user-managed-provider",
+			Email:  "integration-managed-provider@example.com",
+		},
+		Variables: map[string]string{
+			"order_id": "IT-ORD-MANAGED",
+			"reason":   "provider_account_routing",
+		},
+	}
+
+	accepted := postNotificationRequest(t, client, req)
+	details := waitForTerminalRequest(t, client, accepted.RequestID, 15, 1*time.Second)
+	if details.Request.Status != notification.RequestStatusDispatched {
+		t.Fatalf("request status = %q, want %q", details.Request.Status, notification.RequestStatusDispatched)
+	}
+	if len(details.DeliveryAttempts) == 0 {
+		t.Fatal("expected a delivery attempt")
+	}
+	if details.DeliveryAttempts[0].Status != notification.DeliveryAttemptAccepted {
+		t.Fatalf("delivery attempt status = %q, want %q", details.DeliveryAttempts[0].Status, notification.DeliveryAttemptAccepted)
+	}
+}
+
+func TestProviderAccountStatusEndpoint(t *testing.T) {
+	client := requireIntegrationClient(t)
+	bindingSet := uniqueKey("it-provider-status")
+
+	account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+		TenantID:    "communication-engine",
+		ProviderKey: "sendgrid-email",
+		DisplayName: "SendGrid Status Demo",
+		Channel:     notification.ChannelEmail,
+		Enabled:     true,
+		Config: map[string]string{
+			"from_email": "noreply@example.com",
+		},
+		SecretRefs: map[string]notification.SecretReference{
+			"api_key": {
+				Ref:          "EMAIL_PROVIDER_API_KEY_DEMO",
+				MaterialType: notification.MaterialTypeSecretString,
+				Source:       "env",
+			},
+		},
+	})
+
+	upsertProviderBinding(t, client, notification.ProviderBindingUpsertRequest{
+		Channel:           notification.ChannelEmail,
+		BindingSet:        bindingSet,
+		ConnectorName:     "connector-email",
+		EndpointURL:       "http://connector-email:8091",
+		ProviderAccountID: account.ProviderAccountID,
+		Enabled:           true,
+		Priority:          10,
+	})
+
+	createCallbackRoute(t, client, notification.CallbackRouteUpsertRequest{
+		ProviderKey:       "email",
+		ProviderAccountID: account.ProviderAccountID,
+		CallbackPath:      "/v1/providers/email/callbacks",
+		VerificationMode:  notification.CallbackVerificationModeSharedSecret,
+		VerificationSecretRef: notification.SecretReference{
+			Ref:          "CALLBACK_PROVIDER_SECRET_DEMO",
+			MaterialType: notification.MaterialTypeSecretString,
+			Source:       "env",
+		},
+		Enabled: true,
+	})
+
+	req := notification.NotificationRequest{
+		IdempotencyKey: uniqueKey("it-provider-status-request"),
+		EventName:      "order.delayed",
+		TemplateKey:    "order-delayed-v1",
+		Channels:       []notification.Channel{notification.ChannelEmail},
+		BindingSet:     bindingSet,
+		Recipient: notification.Recipient{
+			UserID: "it-user-provider-status",
+			Email:  "integration-provider-status@example.com",
+		},
+		Variables: map[string]string{
+			"order_id": "IT-ORD-STATUS",
+			"reason":   "status_endpoint",
+		},
+	}
+
+	accepted := postNotificationRequest(t, client, req)
+	_ = waitForTerminalRequest(t, client, accepted.RequestID, 15, 1*time.Second)
+
+	status := getProviderAccountStatus(t, client, account.ProviderAccountID)
+	if status.ProviderAccount.ProviderAccountID != account.ProviderAccountID {
+		t.Fatalf("provider_account_id = %q, want %q", status.ProviderAccount.ProviderAccountID, account.ProviderAccountID)
+	}
+	if len(status.ProviderBindings) != 1 {
+		t.Fatalf("provider bindings length = %d, want 1", len(status.ProviderBindings))
+	}
+	if len(status.BindingHealth) == 0 {
+		t.Fatal("expected binding health to be populated")
+	}
+	if status.CallbackRoute == nil {
+		t.Fatal("expected callback route to be present")
 	}
 }
 
@@ -392,7 +770,188 @@ func upsertProviderBinding(t *testing.T, client *testClient, req notification.Pr
 	}
 }
 
+func createProviderBinding(t *testing.T, client *testClient, req notification.ProviderBindingUpsertRequest) notification.ProviderBinding {
+	t.Helper()
+	status, body := client.mustJSON(t, http.MethodPost, "/v1/provider-bindings", req)
+	if status != http.StatusOK {
+		t.Fatalf("create provider binding status = %d, want %d, body=%s", status, http.StatusOK, string(body))
+	}
+
+	var binding notification.ProviderBinding
+	if err := json.Unmarshal(body, &binding); err != nil {
+		t.Fatalf("decode provider binding response: %v", err)
+	}
+	return binding
+}
+
+func createCallbackRoute(t *testing.T, client *testClient, req notification.CallbackRouteUpsertRequest) notification.CallbackRoute {
+	t.Helper()
+
+	status, body := client.mustJSON(t, http.MethodPost, "/v1/callback-routes", req)
+	if status != http.StatusCreated {
+		t.Fatalf("create callback route status = %d, want %d, body=%s", status, http.StatusCreated, string(body))
+	}
+
+	var route notification.CallbackRoute
+	if err := json.Unmarshal(body, &route); err != nil {
+		t.Fatalf("decode callback route response: %v", err)
+	}
+	return route
+}
+
+func upsertRoutingPolicy(t *testing.T, client *testClient, req notification.RoutingPolicyUpsertRequest) notification.RoutingPolicy {
+	t.Helper()
+
+	status, body := client.mustJSON(t, http.MethodPost, "/v1/routing-policies", req)
+	if status != http.StatusOK {
+		t.Fatalf("upsert routing policy status = %d, want %d, body=%s", status, http.StatusOK, string(body))
+	}
+
+	var policy notification.RoutingPolicy
+	if err := json.Unmarshal(body, &policy); err != nil {
+		t.Fatalf("decode routing policy response: %v", err)
+	}
+	return policy
+}
+
+func upsertTemplate(t *testing.T, client *testClient, req notification.TemplateUpsertRequest) notification.Template {
+	t.Helper()
+
+	status, body := client.mustJSON(t, http.MethodPost, "/v1/templates", req)
+	if status != http.StatusOK {
+		t.Fatalf("upsert template status = %d, want %d, body=%s", status, http.StatusOK, string(body))
+	}
+
+	var tmpl notification.Template
+	if err := json.Unmarshal(body, &tmpl); err != nil {
+		t.Fatalf("decode template response: %v", err)
+	}
+	return tmpl
+}
+
+func getProviderAccountStatus(t *testing.T, client *testClient, providerAccountID string) providerAccountStatusResponse {
+	t.Helper()
+
+	status, body := client.mustRequest(t, http.MethodGet, "/v1/provider-accounts/"+providerAccountID+"/status", nil)
+	if status != http.StatusOK {
+		t.Fatalf("get provider account status code = %d, want %d, body=%s", status, http.StatusOK, string(body))
+	}
+
+	var response providerAccountStatusResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode provider account status response: %v", err)
+	}
+	return response
+}
+
+func getProviderDefinitions(t *testing.T, client *testClient) []notification.ProviderDefinition {
+	t.Helper()
+
+	status, body := client.mustRequest(t, http.MethodGet, "/v1/provider-definitions", nil)
+	if status != http.StatusOK {
+		t.Fatalf("get provider definitions status = %d, want %d, body=%s", status, http.StatusOK, string(body))
+	}
+
+	var response struct {
+		ProviderDefinitions []notification.ProviderDefinition `json:"provider_definitions"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode provider definitions response: %v", err)
+	}
+	return response.ProviderDefinitions
+}
+
+func hasProviderDefinition(definitions []notification.ProviderDefinition, providerKey string) bool {
+	for _, definition := range definitions {
+		if definition.ProviderKey == providerKey {
+			return true
+		}
+	}
+	return false
+}
+
+func createProviderAccount(t *testing.T, client *testClient, req notification.ProviderAccountUpsertRequest) notification.ProviderAccount {
+	t.Helper()
+
+	status, body := client.mustJSON(t, http.MethodPost, "/v1/provider-accounts", req)
+	if status != http.StatusCreated {
+		t.Fatalf("create provider account status = %d, want %d, body=%s", status, http.StatusCreated, string(body))
+	}
+
+	var account notification.ProviderAccount
+	if err := json.Unmarshal(body, &account); err != nil {
+		t.Fatalf("decode provider account response: %v", err)
+	}
+	return account
+}
+
+func listProviderAccounts(t *testing.T, client *testClient, tenantID string) []notification.ProviderAccount {
+	t.Helper()
+
+	status, body := client.mustRequest(t, http.MethodGet, "/v1/provider-accounts?tenant_id="+tenantID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list provider accounts status = %d, want %d, body=%s", status, http.StatusOK, string(body))
+	}
+
+	var response providerAccountsResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode provider accounts response: %v", err)
+	}
+	return response.ProviderAccounts
+}
+
+func getProviderAccount(t *testing.T, client *testClient, providerAccountID string) notification.ProviderAccount {
+	t.Helper()
+
+	status, body := client.mustRequest(t, http.MethodGet, "/v1/provider-accounts/"+providerAccountID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("get provider account status = %d, want %d, body=%s", status, http.StatusOK, string(body))
+	}
+
+	var account notification.ProviderAccount
+	if err := json.Unmarshal(body, &account); err != nil {
+		t.Fatalf("decode provider account response: %v", err)
+	}
+	return account
+}
+
+func patchProviderAccount(t *testing.T, client *testClient, providerAccountID string, req notification.ProviderAccountPatchRequest) notification.ProviderAccount {
+	t.Helper()
+
+	status, body := client.mustJSON(t, http.MethodPatch, "/v1/provider-accounts/"+providerAccountID, req)
+	if status != http.StatusOK {
+		t.Fatalf("patch provider account status = %d, want %d, body=%s", status, http.StatusOK, string(body))
+	}
+
+	var account notification.ProviderAccount
+	if err := json.Unmarshal(body, &account); err != nil {
+		t.Fatalf("decode patched provider account response: %v", err)
+	}
+	return account
+}
+
+func disableProviderAccount(t *testing.T, client *testClient, providerAccountID string) notification.ProviderAccount {
+	t.Helper()
+
+	status, body := client.mustJSON(t, http.MethodPost, "/v1/provider-accounts/"+providerAccountID+"/disable", map[string]any{})
+	if status != http.StatusOK {
+		t.Fatalf("disable provider account status = %d, want %d, body=%s", status, http.StatusOK, string(body))
+	}
+
+	var account notification.ProviderAccount
+	if err := json.Unmarshal(body, &account); err != nil {
+		t.Fatalf("decode disabled provider account response: %v", err)
+	}
+	return account
+}
+
 func postProviderCallback(t *testing.T, client *testClient, provider string, payload notification.ProviderCallback) {
+	t.Helper()
+
+	postProviderCallbackWithHeaders(t, client, provider, payload, nil)
+}
+
+func postProviderCallbackWithHeaders(t *testing.T, client *testClient, provider string, payload notification.ProviderCallback, headers map[string]string) {
 	t.Helper()
 
 	body, err := json.Marshal(payload)
@@ -405,6 +964,9 @@ func postProviderCallback(t *testing.T, client *testClient, provider string, pay
 		t.Fatalf("build provider callback request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 
 	resp, err := client.client.Do(req)
 	if err != nil {

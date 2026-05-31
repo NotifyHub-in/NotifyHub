@@ -577,7 +577,38 @@ At runtime:
 - the worker passes the provider account ID to `connector-push`
 - `connector-push` resolves the JSON blob through the secret resolver
 - `connector-push` selects the `fcm` adapter
-- the adapter builds the Firebase client with that credential material
+- the adapter builds an authenticated FCM request with that credential material
+
+## Runtime Connector Paths
+
+Webhook and push are first-party connectors too. The difference is where the connector sends the request:
+
+- webhook sends to the customer-owned destination URL
+- push sends to FCM or another push provider endpoint
+
+```mermaid
+flowchart LR
+    APP["communication-engine / upstream client"]
+    API["Notification Control Plane API"]
+    K["Kafka"]
+    W["Worker"]
+    CW["connector-webhook"]
+    CP["connector-push"]
+    DEST["Customer webhook URL"]
+    FCM["FCM / push provider"]
+
+    APP --> API --> K --> W
+    W --> CW --> DEST
+    W --> CP --> FCM
+```
+
+At runtime:
+
+- the worker passes the resolved destination and provider account to `connector-webhook`
+- `connector-webhook` posts the normalized payload to the configured customer URL
+- the worker passes the provider account to `connector-push`
+- `connector-push` resolves the JSON blob through the secret resolver
+- `connector-push` selects the `fcm` adapter and sends to the provider endpoint
 
 ## Required Service Changes
 

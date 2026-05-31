@@ -13,6 +13,7 @@ scrape_configs:
           - connector-email:8091
           - connector-sms:8092
           - connector-webhook:8093
+          - connector-push:8094
 
   - job_name: cadvisor
     metrics_path: /metrics

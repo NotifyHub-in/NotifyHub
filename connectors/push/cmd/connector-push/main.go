@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -23,14 +22,7 @@ import (
 )
 
 func main() {
-	runConnector("connector-email", 8091, notification.ConnectorCapabilities{
-		Name:     "email",
-		Channels: []notification.Channel{notification.ChannelEmail},
-	})
-}
-
-func runConnector(serviceName string, port int, capabilities notification.ConnectorCapabilities) {
-	cfg, err := config.LoadHTTPServiceConfig(serviceName, port)
+	cfg, err := config.LoadHTTPServiceConfig("connector-push", 8094)
 	if err != nil {
 		panic(err)
 	}
@@ -40,7 +32,10 @@ func runConnector(serviceName string, port int, capabilities notification.Connec
 
 	err = app.RunHTTPService(cfg, logger, nil, func(mux *http.ServeMux, info serviceinfo.Info, _ *metrics.Registry) {
 		mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
-			httpx.WriteJSON(w, http.StatusOK, capabilities)
+			httpx.WriteJSON(w, http.StatusOK, notification.ConnectorCapabilities{
+				Name:     "push",
+				Channels: []notification.Channel{notification.ChannelPush},
+			})
 		})
 		mux.HandleFunc("POST /v1/send", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.ConnectorSendRequest
@@ -52,15 +47,8 @@ func runConnector(serviceName string, port int, capabilities notification.Connec
 				})
 				return
 			}
-			adapter, err := selectEmailAdapter(req.ProviderKey)
-			if err != nil {
-				httpx.WriteJSON(w, http.StatusBadRequest, notification.ConnectorErrorResponse{
-					Error:          err.Error(),
-					Code:           "unsupported_provider",
-					Classification: notification.FailureClassMisconfigured,
-				})
-				return
-			}
+
+			adapter := fcmAdapter{}
 			if err := adapter.validate(req); err != nil {
 				httpx.WriteJSON(w, err.statusCode, notification.ConnectorErrorResponse{
 					Error:          err.message,
@@ -70,6 +58,7 @@ func runConnector(serviceName string, port int, capabilities notification.Connec
 				})
 				return
 			}
+
 			outbound, buildErr := adapter.build(req)
 			if buildErr != nil {
 				httpx.WriteJSON(w, buildErr.statusCode, notification.ConnectorErrorResponse{
@@ -80,7 +69,8 @@ func runConnector(serviceName string, port int, capabilities notification.Connec
 				})
 				return
 			}
-			providerMessageID, sendErr := adapter.send(r.Context(), providerClient, outbound)
+
+			messageID, sendErr := adapter.send(r.Context(), providerClient, outbound)
 			if sendErr != nil {
 				httpx.WriteJSON(w, sendErr.statusCode, notification.ConnectorErrorResponse{
 					Error:          sendErr.message,
@@ -90,10 +80,11 @@ func runConnector(serviceName string, port int, capabilities notification.Connec
 				})
 				return
 			}
-			logger.Info("sent email provider request", "request_id", req.RequestID, "provider", req.ProviderKey, "endpoint", outbound.URL)
+
+			logger.Info("sent push provider request", "request_id", req.RequestID, "provider", req.ProviderKey, "endpoint", outbound.URL)
 			httpx.WriteJSON(w, http.StatusAccepted, notification.ConnectorSendResponse{
 				RequestID:         req.RequestID,
-				ProviderMessageID: providerMessageID,
+				ProviderMessageID: messageID,
 				Status:            "accepted",
 				AcceptedAt:        time.Now().UTC(),
 			})
@@ -113,42 +104,9 @@ func providerMessageID() string {
 	return hex.EncodeToString(bytes[:])
 }
 
-type emailAdapter interface {
-	validate(req notification.ConnectorSendRequest) *emailAdapterError
-	build(req notification.ConnectorSendRequest) (providerOutboundRequest, *emailAdapterError)
-	send(ctx context.Context, client *http.Client, outbound providerOutboundRequest) (string, *emailAdapterError)
-}
+type fcmAdapter struct{}
 
-type sendgridEmailAdapter struct{}
-
-type providerOutboundRequest struct {
-	URL     string
-	Method  string
-	Headers map[string]string
-	Body    []byte
-}
-
-type sendgridOutboundPayload struct {
-	Personalizations []sendgridPersonalization `json:"personalizations"`
-	From             sendgridAddress           `json:"from"`
-	Subject          string                    `json:"subject,omitempty"`
-	Content          []sendgridContent         `json:"content"`
-}
-
-type sendgridPersonalization struct {
-	To []sendgridAddress `json:"to"`
-}
-
-type sendgridAddress struct {
-	Email string `json:"email"`
-}
-
-type sendgridContent struct {
-	Type  string `json:"type"`
-	Value string `json:"value"`
-}
-
-type emailAdapterError struct {
+type fcmAdapterError struct {
 	statusCode     int
 	message        string
 	code           string
@@ -156,45 +114,67 @@ type emailAdapterError struct {
 	retryable      bool
 }
 
-func selectEmailAdapter(providerKey string) (emailAdapter, error) {
-	switch providerKey {
-	case "", "sendgrid-email":
-		return sendgridEmailAdapter{}, nil
-	default:
-		return nil, fmt.Errorf("unsupported email provider %q", providerKey)
-	}
+type fcmOutboundRequest struct {
+	URL     string
+	Method  string
+	Headers map[string]string
+	Body    []byte
 }
 
-func (sendgridEmailAdapter) validate(req notification.ConnectorSendRequest) *emailAdapterError {
-	if req.Destination == "" || !strings.Contains(req.Destination, "@") {
-		return &emailAdapterError{
+type fcmOutboundPayload struct {
+	Message fcmMessage `json:"message"`
+}
+
+type fcmMessage struct {
+	Token        string            `json:"token,omitempty"`
+	Topic        string            `json:"topic,omitempty"`
+	Notification fcmNotification   `json:"notification"`
+	Data         map[string]string `json:"data,omitempty"`
+}
+
+type fcmNotification struct {
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body,omitempty"`
+}
+
+func (fcmAdapter) validate(req notification.ConnectorSendRequest) *fcmAdapterError {
+	if req.Destination == "" {
+		return &fcmAdapterError{
 			statusCode:     http.StatusBadRequest,
-			message:        "invalid email destination",
+			message:        "missing push destination",
 			code:           "invalid_destination",
 			classification: notification.FailureClassInvalidRequest,
 		}
 	}
-	if token := req.ProviderConfig["api_key"]; token == "unauthorized" {
-		return &emailAdapterError{
+	if req.ProviderConfig["service_account_json"] == "" {
+		return &fcmAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "missing fcm service_account_json",
+			code:           "missing_provider_config",
+			classification: notification.FailureClassMisconfigured,
+		}
+	}
+	if token := req.ProviderConfig["access_token"]; token == "unauthorized" {
+		return &fcmAdapterError{
 			statusCode:     http.StatusUnauthorized,
-			message:        "provider rejected email credentials",
+			message:        "provider rejected push credentials",
 			code:           "invalid_credentials",
 			classification: notification.FailureClassUnauthorized,
 		}
 	}
 	switch req.Metadata["simulate_failure"] {
 	case "rate_limit":
-		return &emailAdapterError{
+		return &fcmAdapterError{
 			statusCode:     http.StatusTooManyRequests,
-			message:        "email provider rate limited the request",
+			message:        "push provider rate limited the request",
 			code:           "rate_limited",
 			classification: notification.FailureClassRateLimited,
 			retryable:      true,
 		}
 	case "provider_outage":
-		return &emailAdapterError{
+		return &fcmAdapterError{
 			statusCode:     http.StatusBadGateway,
-			message:        "email provider temporary outage",
+			message:        "push provider temporary outage",
 			code:           "provider_outage",
 			classification: notification.FailureClassTransient,
 			retryable:      true,
@@ -203,94 +183,89 @@ func (sendgridEmailAdapter) validate(req notification.ConnectorSendRequest) *ema
 	return nil
 }
 
-func (sendgridEmailAdapter) build(req notification.ConnectorSendRequest) (providerOutboundRequest, *emailAdapterError) {
-	fromEmail := req.ProviderConfig["from_email"]
-	apiKey := req.ProviderConfig["api_key"]
+func (fcmAdapter) build(req notification.ConnectorSendRequest) (fcmOutboundRequest, *fcmAdapterError) {
+	projectID := req.ProviderConfig["project_id"]
+	if projectID == "" {
+		return fcmOutboundRequest{}, &fcmAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "missing fcm project_id",
+			code:           "missing_provider_config",
+			classification: notification.FailureClassMisconfigured,
+		}
+	}
 	baseURL := req.ProviderConfig["base_url"]
-	if fromEmail == "" {
-		return providerOutboundRequest{}, &emailAdapterError{
-			statusCode:     http.StatusBadRequest,
-			message:        "missing sendgrid from_email",
-			code:           "missing_provider_config",
-			classification: notification.FailureClassMisconfigured,
-		}
-	}
-	if apiKey == "" {
-		return providerOutboundRequest{}, &emailAdapterError{
-			statusCode:     http.StatusBadRequest,
-			message:        "missing sendgrid api_key",
-			code:           "missing_provider_config",
-			classification: notification.FailureClassMisconfigured,
-		}
-	}
 	if baseURL == "" {
-		baseURL = "https://api.sendgrid.com"
+		baseURL = "https://fcm.googleapis.com"
 	}
-	endpoint, err := joinProviderURL(baseURL, "/v3/mail/send")
+	endpoint, err := joinProviderURL(baseURL, "/v1/projects/"+projectID+"/messages:send")
 	if err != nil {
-		return providerOutboundRequest{}, &emailAdapterError{
+		return fcmOutboundRequest{}, &fcmAdapterError{
 			statusCode:     http.StatusBadRequest,
-			message:        "invalid sendgrid base_url",
+			message:        "invalid fcm base_url",
 			code:           "invalid_provider_config",
 			classification: notification.FailureClassMisconfigured,
 		}
 	}
-
-	subject := req.Subject
-	if subject == "" {
-		subject = "Notification"
+	accessToken := req.ProviderConfig["access_token"]
+	if accessToken == "" {
+		accessToken = extractAccessToken(req.ProviderConfig["service_account_json"])
+	}
+	if accessToken == "" {
+		return fcmOutboundRequest{}, &fcmAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "service_account_json does not contain an access token",
+			code:           "missing_provider_config",
+			classification: notification.FailureClassMisconfigured,
+		}
 	}
 
-	payload := sendgridOutboundPayload{
-		Personalizations: []sendgridPersonalization{
-			{
-				To: []sendgridAddress{{Email: req.Destination}},
-			},
+	message := fcmMessage{
+		Notification: fcmNotification{
+			Title: req.Subject,
+			Body:  req.Body,
 		},
-		From:    sendgridAddress{Email: fromEmail},
-		Subject: subject,
-		Content: []sendgridContent{
-			{Type: "text/plain", Value: req.Body},
-		},
+		Data: req.Metadata,
 	}
-	body, err := json.Marshal(payload)
+	if strings.HasPrefix(req.Destination, "/topics/") {
+		message.Topic = strings.TrimPrefix(req.Destination, "/topics/")
+	} else if strings.HasPrefix(req.Destination, "topics/") {
+		message.Topic = strings.TrimPrefix(req.Destination, "topics/")
+	} else {
+		message.Token = req.Destination
+	}
+	if message.Notification.Title == "" {
+		message.Notification.Title = "Notification"
+	}
+	body, err := json.Marshal(fcmOutboundPayload{Message: message})
 	if err != nil {
-		return providerOutboundRequest{}, &emailAdapterError{
+		return fcmOutboundRequest{}, &fcmAdapterError{
 			statusCode:     http.StatusInternalServerError,
-			message:        "failed to encode sendgrid payload",
+			message:        "failed to encode fcm payload",
 			code:           "encode_failed",
 			classification: notification.FailureClassTransient,
 		}
 	}
 
-	return providerOutboundRequest{
+	return fcmOutboundRequest{
 		URL:    endpoint,
 		Method: http.MethodPost,
 		Headers: map[string]string{
-			"Authorization": "Bearer " + apiKey,
+			"Authorization": "Bearer " + accessToken,
 			"Content-Type":  "application/json",
 		},
 		Body: body,
 	}, nil
 }
 
-func (sendgridEmailAdapter) send(ctx context.Context, client *http.Client, outbound providerOutboundRequest) (string, *emailAdapterError) {
-	messageID, err := executeProviderRequest(ctx, client, outbound, "email")
-	if err != nil {
-		return "", err
-	}
-	return messageID, nil
-}
-
-func executeProviderRequest(ctx context.Context, client *http.Client, outbound providerOutboundRequest, channelLabel string) (string, *emailAdapterError) {
+func (fcmAdapter) send(ctx context.Context, client *http.Client, outbound fcmOutboundRequest) (string, *fcmAdapterError) {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	req, err := http.NewRequestWithContext(ctx, outbound.Method, outbound.URL, bytes.NewReader(outbound.Body))
 	if err != nil {
-		return "", &emailAdapterError{
+		return "", &fcmAdapterError{
 			statusCode:     http.StatusInternalServerError,
-			message:        "failed to build provider request",
+			message:        "failed to build push request",
 			code:           "request_build_failed",
 			classification: notification.FailureClassTransient,
 			retryable:      true,
@@ -301,52 +276,64 @@ func executeProviderRequest(ctx context.Context, client *http.Client, outbound p
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", &emailAdapterError{
+		return "", &fcmAdapterError{
 			statusCode:     http.StatusBadGateway,
-			message:        channelLabel + " provider request failed: " + err.Error(),
+			message:        "push provider request failed: " + err.Error(),
 			code:           "provider_request_failed",
 			classification: notification.FailureClassTransient,
 			retryable:      true,
 		}
 	}
 	defer resp.Body.Close()
-
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", providerErrorFromHTTPResponse(resp.StatusCode, string(body), channelLabel)
+		return "", fcmProviderErrorFromHTTPResponse(resp.StatusCode, string(body))
 	}
-
-	return providerMessageIDFromResponse(resp.Header, body), nil
+	if value := resp.Header.Get("X-Provider-Message-ID"); value != "" {
+		return value, nil
+	}
+	if value := resp.Header.Get("X-Message-Id"); value != "" {
+		return value, nil
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err == nil {
+		for _, key := range []string{"name", "message_id", "id"} {
+			if value, ok := parsed[key].(string); ok && value != "" {
+				return value, nil
+			}
+		}
+	}
+	return providerMessageID(), nil
 }
 
-func providerErrorFromHTTPResponse(statusCode int, responseBody string, channelLabel string) *emailAdapterError {
+func fcmProviderErrorFromHTTPResponse(statusCode int, responseBody string) *fcmAdapterError {
 	switch statusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return &emailAdapterError{
+		return &fcmAdapterError{
 			statusCode:     statusCode,
-			message:        channelLabel + " provider rejected credentials",
+			message:        "push provider rejected credentials",
 			code:           "invalid_credentials",
 			classification: notification.FailureClassUnauthorized,
 		}
 	case http.StatusTooManyRequests:
-		return &emailAdapterError{
+		return &fcmAdapterError{
 			statusCode:     statusCode,
-			message:        channelLabel + " provider rate limited the request",
+			message:        "push provider rate limited the request",
 			code:           "rate_limited",
 			classification: notification.FailureClassRateLimited,
 			retryable:      true,
 		}
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
-		return &emailAdapterError{
+		return &fcmAdapterError{
 			statusCode:     statusCode,
-			message:        channelLabel + " provider rejected the request: " + trimResponse(responseBody),
+			message:        "push provider rejected the request: " + trimResponse(responseBody),
 			code:           "invalid_provider_request",
 			classification: notification.FailureClassInvalidRequest,
 		}
 	default:
-		return &emailAdapterError{
+		return &fcmAdapterError{
 			statusCode:     statusCode,
-			message:        channelLabel + " provider temporary outage",
+			message:        "push provider temporary outage",
 			code:           "provider_outage",
 			classification: notification.FailureClassTransient,
 			retryable:      true,
@@ -354,22 +341,21 @@ func providerErrorFromHTTPResponse(statusCode int, responseBody string, channelL
 	}
 }
 
-func providerMessageIDFromResponse(headers http.Header, body []byte) string {
-	if value := headers.Get("X-Provider-Message-ID"); value != "" {
-		return value
-	}
-	if value := headers.Get("X-Message-Id"); value != "" {
-		return value
+func extractAccessToken(serviceAccountJSON string) string {
+	if serviceAccountJSON == "" {
+		return ""
 	}
 	var parsed map[string]any
-	if err := json.Unmarshal(body, &parsed); err == nil {
-		for _, key := range []string{"message_id", "id", "messageId"} {
-			if value, ok := parsed[key].(string); ok && value != "" {
-				return value
-			}
-		}
+	if err := json.Unmarshal([]byte(serviceAccountJSON), &parsed); err != nil {
+		return ""
 	}
-	return providerMessageID()
+	if value, ok := parsed["access_token"].(string); ok && value != "" {
+		return value
+	}
+	if value, ok := parsed["server_key"].(string); ok && value != "" {
+		return value
+	}
+	return ""
 }
 
 func joinProviderURL(baseURL string, path string) (string, error) {

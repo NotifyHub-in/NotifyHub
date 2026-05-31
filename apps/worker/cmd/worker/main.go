@@ -23,6 +23,7 @@ import (
 	"github.com/your-org/notification-control-plane/libs/core/httpx"
 	"github.com/your-org/notification-control-plane/libs/core/id"
 	"github.com/your-org/notification-control-plane/libs/core/render"
+	"github.com/your-org/notification-control-plane/libs/core/secrets"
 	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
 	"github.com/your-org/notification-control-plane/libs/core/webhooks"
 	kafkamq "github.com/your-org/notification-control-plane/libs/messaging/kafka"
@@ -574,7 +575,7 @@ func processChannelDelivery(
 		}
 		breaker := breakers.breakerFor(binding, health)
 
-		providerConfig, err := resolveProviderConfig(binding)
+		providerKey, providerConfig, err := resolveBindingProviderConfig(ctx, store, binding)
 		if err != nil {
 			lastError = err.Error()
 			lastFailureClass = notification.FailureClassMisconfigured
@@ -603,6 +604,8 @@ func processChannelDelivery(
 		}
 
 		bindingSendReq := sendReq
+		bindingSendReq.ProviderKey = providerKey
+		bindingSendReq.ProviderAccountID = binding.ProviderAccountID
 		bindingSendReq.ProviderConfig = providerConfig
 		attempt := notification.DeliveryAttempt{
 			AttemptID:     id.New(12),
@@ -887,6 +890,8 @@ func connectorName(channel notification.Channel) string {
 		return "email"
 	case notification.ChannelSMS:
 		return "sms"
+	case notification.ChannelPush:
+		return "push"
 	default:
 		return "unsupported"
 	}
@@ -894,7 +899,7 @@ func connectorName(channel notification.Channel) string {
 
 func supportedChannel(channel notification.Channel) bool {
 	switch channel {
-	case notification.ChannelWebhook, notification.ChannelEmail, notification.ChannelSMS:
+	case notification.ChannelWebhook, notification.ChannelEmail, notification.ChannelSMS, notification.ChannelPush:
 		return true
 	default:
 		return false
@@ -909,6 +914,11 @@ func destination(record notification.NotificationRecord, channel notification.Ch
 		return record.Recipient.Email
 	case notification.ChannelSMS:
 		return record.Recipient.Phone
+	case notification.ChannelPush:
+		if record.Recipient.Topic != "" {
+			return "/topics/" + record.Recipient.Topic
+		}
+		return record.Recipient.UserID
 	default:
 		return record.Recipient.UserID
 	}
@@ -1199,6 +1209,40 @@ func resolveProviderConfig(binding notification.ProviderBinding) (map[string]str
 	}
 
 	return resolved, nil
+}
+
+func resolveBindingProviderConfig(ctx context.Context, store *postgres.Store, binding notification.ProviderBinding) (string, map[string]string, error) {
+	if binding.ProviderAccountID != "" {
+		account, err := store.GetProviderAccount(ctx, binding.ProviderAccountID)
+		if err != nil {
+			return "", nil, fmt.Errorf("load provider account %s: %w", binding.ProviderAccountID, err)
+		}
+		if !account.Enabled {
+			return "", nil, fmt.Errorf("provider account %s is disabled", binding.ProviderAccountID)
+		}
+
+		resolved := make(map[string]string, len(account.Config)+len(account.SecretRefs))
+		for key, value := range account.Config {
+			if key == "" {
+				return "", nil, fmt.Errorf("provider account %s has an empty config key", binding.ProviderAccountID)
+			}
+			resolved[key] = value
+		}
+		for key, ref := range account.SecretRefs {
+			if key == "" {
+				return "", nil, fmt.Errorf("provider account %s has an empty secret ref key", binding.ProviderAccountID)
+			}
+			value, err := secrets.Resolve(ref)
+			if err != nil {
+				return "", nil, fmt.Errorf("resolve secret ref %q for provider account %s: %w", key, binding.ProviderAccountID, err)
+			}
+			resolved[key] = value
+		}
+		return account.ProviderKey, resolved, nil
+	}
+
+	resolved, err := resolveProviderConfig(binding)
+	return "", resolved, err
 }
 
 func newProviderBreakerManager(store *postgres.Store, logger *slog.Logger) *providerBreakerManager {

@@ -172,6 +172,279 @@ func main() {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"provider_bindings": bindings})
 		})
 
+		mux.HandleFunc("GET /v1/provider-definitions", func(w http.ResponseWriter, _ *http.Request) {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"provider_definitions": notification.ProviderDefinitions()})
+		})
+
+		mux.HandleFunc("GET /v1/provider-accounts", func(w http.ResponseWriter, r *http.Request) {
+			tenantID := r.URL.Query().Get("tenant_id")
+			accounts, err := store.ListProviderAccounts(r.Context(), tenantID)
+			if err != nil {
+				logger.Error("list provider accounts failed", "error", err, "tenant_id", tenantID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider accounts"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"provider_accounts": accounts})
+		})
+
+		mux.HandleFunc("GET /v1/provider-accounts/{providerAccountID}", func(w http.ResponseWriter, r *http.Request) {
+			providerAccountID := r.PathValue("providerAccountID")
+			account, err := store.GetProviderAccount(r.Context(), providerAccountID)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "provider account not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("get provider account failed", "error", err, "provider_account_id", providerAccountID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider account"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, account)
+		})
+
+		mux.HandleFunc("GET /v1/provider-accounts/{providerAccountID}/status", func(w http.ResponseWriter, r *http.Request) {
+			providerAccountID := r.PathValue("providerAccountID")
+			account, err := store.GetProviderAccount(r.Context(), providerAccountID)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "provider account not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("get provider account status failed", "error", err, "provider_account_id", providerAccountID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider account"})
+				return
+			}
+
+			bindings, err := store.ListProviderBindings(r.Context())
+			if err != nil {
+				logger.Error("list provider bindings for provider account status failed", "error", err, "provider_account_id", providerAccountID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider bindings"})
+				return
+			}
+
+			var accountBindings []notification.ProviderBinding
+			var bindingHealth []notification.ProviderBindingHealth
+			for _, binding := range bindings {
+				if binding.ProviderAccountID != providerAccountID {
+					continue
+				}
+				accountBindings = append(accountBindings, binding)
+
+				health, healthErr := store.GetProviderBindingHealth(r.Context(), binding.BindingID)
+				if errors.Is(healthErr, postgres.ErrNotFound) {
+					continue
+				}
+				if healthErr != nil {
+					logger.Error("load provider binding health for provider account status failed", "error", healthErr, "provider_account_id", providerAccountID, "binding_id", binding.BindingID)
+					httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider binding health"})
+					return
+				}
+				bindingHealth = append(bindingHealth, health)
+			}
+
+			var callbackRoute *notification.CallbackRoute
+			if route, routeErr := store.GetCallbackRouteByProviderKey(r.Context(), account.ProviderKey); routeErr == nil {
+				callbackRoute = &route
+			} else if !errors.Is(routeErr, postgres.ErrNotFound) {
+				logger.Error("load callback route for provider account status failed", "error", routeErr, "provider_account_id", providerAccountID, "provider_key", account.ProviderKey)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load callback route"})
+				return
+			}
+
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"provider_account":  account,
+				"provider_bindings": accountBindings,
+				"binding_health":    bindingHealth,
+				"callback_route":    callbackRoute,
+			})
+		})
+
+		mux.HandleFunc("POST /v1/provider-accounts", func(w http.ResponseWriter, r *http.Request) {
+			var req notification.ProviderAccountUpsertRequest
+			if err := httpx.DecodeJSON(r, &req); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid provider account payload"})
+				return
+			}
+			account := notification.ProviderAccount{
+				ProviderAccountID: id.New(12),
+				TenantID:          req.TenantID,
+				ProviderKey:       req.ProviderKey,
+				DisplayName:       req.DisplayName,
+				Channel:           req.Channel,
+				Enabled:           req.Enabled,
+				Config:            req.Config,
+				SecretRefs:        req.SecretRefs,
+			}
+			if err := notification.ValidateProviderAccount(account); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			if err := store.UpsertProviderAccount(r.Context(), account); err != nil {
+				logger.Error("upsert provider account failed", "error", err, "provider_account_id", account.ProviderAccountID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save provider account"})
+				return
+			}
+
+			saved, err := store.GetProviderAccount(r.Context(), account.ProviderAccountID)
+			if err != nil {
+				logger.Error("reload provider account failed", "error", err, "provider_account_id", account.ProviderAccountID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload provider account"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusCreated, saved)
+		})
+
+		mux.HandleFunc("PATCH /v1/provider-accounts/{providerAccountID}", func(w http.ResponseWriter, r *http.Request) {
+			providerAccountID := r.PathValue("providerAccountID")
+			existing, err := store.GetProviderAccount(r.Context(), providerAccountID)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "provider account not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("load provider account for patch failed", "error", err, "provider_account_id", providerAccountID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider account"})
+				return
+			}
+
+			var req notification.ProviderAccountPatchRequest
+			if err := httpx.DecodeJSON(r, &req); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid provider account patch payload"})
+				return
+			}
+
+			updated := existing
+			if req.DisplayName != nil {
+				updated.DisplayName = *req.DisplayName
+			}
+			if req.Enabled != nil {
+				updated.Enabled = *req.Enabled
+			}
+			if req.Config != nil {
+				updated.Config = *req.Config
+			}
+			if req.SecretRefs != nil {
+				updated.SecretRefs = *req.SecretRefs
+			}
+
+			if err := notification.ValidateProviderAccount(updated); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			if err := store.UpsertProviderAccount(r.Context(), updated); err != nil {
+				logger.Error("patch provider account failed", "error", err, "provider_account_id", providerAccountID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save provider account"})
+				return
+			}
+
+			saved, err := store.GetProviderAccount(r.Context(), providerAccountID)
+			if err != nil {
+				logger.Error("reload patched provider account failed", "error", err, "provider_account_id", providerAccountID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload provider account"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, saved)
+		})
+
+		mux.HandleFunc("POST /v1/provider-accounts/{providerAccountID}/disable", func(w http.ResponseWriter, r *http.Request) {
+			providerAccountID := r.PathValue("providerAccountID")
+			if err := store.DisableProviderAccount(r.Context(), providerAccountID); errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "provider account not found"})
+				return
+			} else if err != nil {
+				logger.Error("disable provider account failed", "error", err, "provider_account_id", providerAccountID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "disable provider account"})
+				return
+			}
+
+			account, err := store.GetProviderAccount(r.Context(), providerAccountID)
+			if err != nil {
+				logger.Error("reload disabled provider account failed", "error", err, "provider_account_id", providerAccountID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload provider account"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, account)
+		})
+
+		mux.HandleFunc("GET /v1/callback-routes", func(w http.ResponseWriter, r *http.Request) {
+			routes, err := store.ListCallbackRoutes(r.Context())
+			if err != nil {
+				logger.Error("list callback routes failed", "error", err)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load callback routes"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"callback_routes": routes})
+		})
+
+		mux.HandleFunc("GET /v1/callback-routes/{providerKey}", func(w http.ResponseWriter, r *http.Request) {
+			providerKey := r.PathValue("providerKey")
+			route, err := store.GetCallbackRouteByProviderKey(r.Context(), providerKey)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "callback route not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("get callback route failed", "error", err, "provider_key", providerKey)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load callback route"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, route)
+		})
+
+		mux.HandleFunc("POST /v1/callback-routes", func(w http.ResponseWriter, r *http.Request) {
+			var req notification.CallbackRouteUpsertRequest
+			if err := httpx.DecodeJSON(r, &req); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid callback route payload"})
+				return
+			}
+			if req.ProviderAccountID == "" || req.CallbackPath == "" {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider_key, provider_account_id, and callback_path are required"})
+				return
+			}
+			if req.ProviderKey == "" {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider_key is required"})
+				return
+			}
+
+			_, err := store.GetProviderAccount(r.Context(), req.ProviderAccountID)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider_account_id not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("load provider account for callback route failed", "error", err, "provider_account_id", req.ProviderAccountID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider account"})
+				return
+			}
+
+			route := notification.CallbackRoute{
+				RouteID:               id.New(12),
+				ProviderKey:           req.ProviderKey,
+				ProviderAccountID:     req.ProviderAccountID,
+				CallbackPath:          req.CallbackPath,
+				VerificationMode:      req.VerificationMode,
+				VerificationSecretRef: req.VerificationSecretRef,
+				Enabled:               req.Enabled,
+			}
+			if err := notification.ValidateCallbackRoute(route); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			if err := store.UpsertCallbackRoute(r.Context(), route); err != nil {
+				logger.Error("upsert callback route failed", "error", err, "provider_key", route.ProviderKey)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save callback route"})
+				return
+			}
+
+			saved, err := store.GetCallbackRouteByProviderKey(r.Context(), route.ProviderKey)
+			if err != nil {
+				logger.Error("reload callback route failed", "error", err, "provider_key", route.ProviderKey)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload callback route"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusCreated, saved)
+		})
+
 		mux.HandleFunc("GET /v1/provider-bindings/{channel}", func(w http.ResponseWriter, r *http.Request) {
 			channel := notification.Channel(r.PathValue("channel"))
 			bindingSet := r.URL.Query().Get("binding_set")
@@ -198,20 +471,47 @@ func main() {
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid provider binding payload"})
 				return
 			}
-			if req.Channel == "" || req.ConnectorName == "" || req.EndpointURL == "" {
-				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "channel, connector_name, and endpoint_url are required"})
+			if req.Channel == "" {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "channel is required"})
+				return
+			}
+			if req.ProviderAccountID == "" && (req.ConnectorName == "" || req.EndpointURL == "") {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "connector_name and endpoint_url are required for legacy bindings"})
+				return
+			}
+			if req.ProviderAccountID != "" && req.ConnectorName == "" {
+				account, err := store.GetProviderAccount(r.Context(), req.ProviderAccountID)
+				if errors.Is(err, postgres.ErrNotFound) {
+					httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider_account_id not found"})
+					return
+				}
+				if err != nil {
+					logger.Error("load provider account for binding failed", "error", err, "provider_account_id", req.ProviderAccountID)
+					httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider account"})
+					return
+				}
+				def, ok := notification.ProviderDefinitionByKey(account.ProviderKey)
+				if !ok {
+					httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider account provider_key is not registered"})
+					return
+				}
+				req.ConnectorName = def.ConnectorName
+			}
+			if req.ProviderAccountID != "" && req.EndpointURL == "" {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "endpoint_url is required for the current connector deployment"})
 				return
 			}
 
 			binding := notification.ProviderBinding{
-				BindingID:     id.New(12),
-				Channel:       req.Channel,
-				BindingSet:    req.BindingSet,
-				ConnectorName: req.ConnectorName,
-				EndpointURL:   req.EndpointURL,
-				ConfigRefs:    req.ConfigRefs,
-				Enabled:       req.Enabled,
-				Priority:      req.Priority,
+				BindingID:         id.New(12),
+				Channel:           req.Channel,
+				BindingSet:        req.BindingSet,
+				ConnectorName:     req.ConnectorName,
+				EndpointURL:       req.EndpointURL,
+				ProviderAccountID: req.ProviderAccountID,
+				ConfigRefs:        req.ConfigRefs,
+				Enabled:           req.Enabled,
+				Priority:          req.Priority,
 			}
 			if err := store.UpsertProviderBinding(r.Context(), binding); err != nil {
 				logger.Error("upsert provider binding failed", "error", err, "channel", req.Channel)
