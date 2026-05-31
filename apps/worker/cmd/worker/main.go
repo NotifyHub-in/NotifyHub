@@ -1092,7 +1092,7 @@ func resolveRoute(ctx context.Context, store *postgres.Store, record notificatio
 	}
 
 	policy, err := store.GetRoutingPolicyByEventName(ctx, record.EventName)
-	if err == postgres.ErrNotFound {
+	if errors.Is(err, postgres.ErrNotFound) {
 		return resolvedRoute{}, fmt.Errorf("no channels requested and no routing policy for event %s", record.EventName)
 	}
 	if err != nil {
@@ -1353,8 +1353,7 @@ func classifyConnectorFailure(err error) (notification.FailureClass, bool) {
 		return classification, sendErr.Retryable || isRetryableFailureClass(classification)
 	}
 
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if _, ok := errors.AsType[net.Error](err); ok {
 		return notification.FailureClassTransient, true
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
