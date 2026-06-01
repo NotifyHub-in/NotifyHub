@@ -18,6 +18,8 @@ This directory collects the important docs for the notification control plane in
   Current API surface and resource schemas.
 - [Project Status](/Users/Shaik/notifications/notification-control-plane/docs/project-status.md)
   What is already built and what is still pending for production readiness.
+- [Production Release Plan](/Users/Shaik/notifications/notification-control-plane/docs/production-release-plan.md)
+  Detailed production-readiness plan with blockers, workstreams, release gates, and go-live checks.
 
 ## Operating The Platform
 

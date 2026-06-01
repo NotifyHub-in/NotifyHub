@@ -2,6 +2,8 @@
 
 This file tracks what has been built so far in the notification control plane and what still needs to be completed to make it production ready.
 
+For the detailed production-readiness plan, sequencing, and go-live checklist, see [Production Release Plan](/Users/Shaik/notifications/notification-control-plane/docs/production-release-plan.md).
+
 ## Completed Work
 
 - [x] Monorepo service layout
