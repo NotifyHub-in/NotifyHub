@@ -1,0 +1,85 @@
+global:
+  appEnv: production
+  appVersion: local
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  labels: {}
+  secretVolume:
+    enabled: true
+    name: notification-control-plane-secrets
+    mountPath: /run/notification-secrets
+    readOnly: true
+
+auth:
+  createSecret: true
+  existingSecret: ""
+  adminToken: integration-admin-token
+  readToken: integration-read-token
+
+database:
+  url: postgresql://notification:notification@local-postgresql.notification-control-plane.svc.cluster.local:5432/notification_control_plane?sslmode=disable
+
+kafka:
+  brokers: local-kafka.notification-control-plane.svc.cluster.local:9092
+  notificationTopic: notification.requests
+  workerGroupID: notification-worker
+
+api:
+  replicaCount: 1
+  port: 8080
+  authRequired: true
+
+worker:
+  replicaCount: 1
+  port: 8081
+
+callbackGateway:
+  replicaCount: 1
+  port: 8082
+
+connectors:
+  replicaCount: 1
+  secretVolumeEnabled: true
+  definitions:
+    - name: connector-email
+      port: 8091
+      envFromSecret: notification-control-plane-email-env
+    - name: connector-sms
+      port: 8092
+    - name: connector-webhook
+      port: 8093
+    - name: connector-push
+      port: 8094
+    - name: connector-whatsapp
+      port: 8095
+
+images:
+  api:
+    repository: notification-control-plane/api
+    tag: local
+  worker:
+    repository: notification-control-plane/worker
+    tag: local
+  callback-gateway:
+    repository: notification-control-plane/callback-gateway
+    tag: local
+  migrate:
+    repository: notification-control-plane/migrate
+    tag: local
+  connector-email:
+    repository: notification-control-plane/connector-email
+    tag: local
+  connector-sms:
+    repository: notification-control-plane/connector-sms
+    tag: local
+  connector-webhook:
+    repository: notification-control-plane/connector-webhook
+    tag: local
+  connector-push:
+    repository: notification-control-plane/connector-push
+    tag: local
+  connector-whatsapp:
+    repository: notification-control-plane/connector-whatsapp
+    tag: local
+
+resources: {}

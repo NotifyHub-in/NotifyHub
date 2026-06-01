@@ -97,6 +97,10 @@ Put only the files you need there. Common examples:
 
 Do not commit these files into git.
 
+The admin/config write surface is protected with `X-Notification-Admin-Token`. In the default local stack, the token is `integration-admin-token`, and the same value is wired into Docker Compose for local runs.
+
+Read-only config/status GETs can use `X-Notification-Read-Token` or the admin token. In the default local stack, the read token is `integration-read-token`, and it is also wired into Docker Compose for local runs.
+
 ## Step 2: Start The Stack
 
 ```bash

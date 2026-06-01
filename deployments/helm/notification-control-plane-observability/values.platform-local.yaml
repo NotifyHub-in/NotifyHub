@@ -1,0 +1,20 @@
+global:
+  appEnv: production
+
+appReleaseName: notification-control-plane
+appNamespace: platform
+exportersNamespace: exporters
+
+prometheus:
+  retention: 7d
+
+postgresExporter:
+  existingSecret: notification-control-plane-observability-postgres-dsn
+  existingSecretKey: data-source-name
+
+kafkaExporter:
+  brokersCSV: local-kafka.notification-control-plane.svc.cluster.local:9092
+
+grafana:
+  adminUser: admin
+  adminPassword: admin

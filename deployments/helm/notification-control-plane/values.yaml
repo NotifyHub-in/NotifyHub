@@ -1,0 +1,86 @@
+global:
+  appEnv: production
+  appVersion: ""
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  labels: {}
+  secretVolume:
+    enabled: true
+    name: notification-control-plane-secrets
+    mountPath: /run/notification-secrets
+    readOnly: true
+
+auth:
+  createSecret: false
+  existingSecret: ""
+  adminToken: ""
+  readToken: ""
+  adminTokenKey: notification-admin-api-token
+  readTokenKey: notification-readonly-api-token
+
+database:
+  url: ""
+
+kafka:
+  brokers: ""
+  notificationTopic: notification.requests
+  workerGroupID: notification-worker
+
+api:
+  replicaCount: 2
+  port: 8080
+  authRequired: true
+
+worker:
+  replicaCount: 2
+  port: 8081
+
+callbackGateway:
+  replicaCount: 2
+  port: 8082
+
+connectors:
+  replicaCount: 2
+  secretVolumeEnabled: true
+  definitions:
+    - name: connector-email
+      port: 8091
+    - name: connector-sms
+      port: 8092
+    - name: connector-webhook
+      port: 8093
+    - name: connector-push
+      port: 8094
+    - name: connector-whatsapp
+      port: 8095
+
+images:
+  api:
+    repository: ghcr.io/your-org/notification-control-plane/api
+    tag: ""
+  worker:
+    repository: ghcr.io/your-org/notification-control-plane/worker
+    tag: ""
+  callback-gateway:
+    repository: ghcr.io/your-org/notification-control-plane/callback-gateway
+    tag: ""
+  migrate:
+    repository: ghcr.io/your-org/notification-control-plane/migrate
+    tag: ""
+  connector-email:
+    repository: ghcr.io/your-org/notification-control-plane/connector-email
+    tag: ""
+  connector-sms:
+    repository: ghcr.io/your-org/notification-control-plane/connector-sms
+    tag: ""
+  connector-webhook:
+    repository: ghcr.io/your-org/notification-control-plane/connector-webhook
+    tag: ""
+  connector-push:
+    repository: ghcr.io/your-org/notification-control-plane/connector-push
+    tag: ""
+  connector-whatsapp:
+    repository: ghcr.io/your-org/notification-control-plane/connector-whatsapp
+    tag: ""
+
+resources: {}

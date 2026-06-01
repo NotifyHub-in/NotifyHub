@@ -1120,19 +1120,45 @@ func refreshQueueMetrics(
 }
 
 func resolveRoute(ctx context.Context, store *postgres.Store, record notification.NotificationRecord) (resolvedRoute, error) {
-	if len(record.Channels) > 0 {
+	if record.BindingSet != "" {
+		if len(record.Channels) > 0 {
+			return resolvedRoute{
+				Channels:   record.Channels,
+				BindingSet: record.BindingSet,
+			}, nil
+		}
+		policy, err := store.GetRoutingPolicyByEventName(ctx, record.EventName)
+		if errors.Is(err, postgres.ErrNotFound) {
+			return resolvedRoute{
+				BindingSet: record.BindingSet,
+			}, nil
+		}
+		if err != nil {
+			return resolvedRoute{}, err
+		}
 		return resolvedRoute{
-			Channels:   record.Channels,
+			Channels:   policy.Channels,
 			BindingSet: record.BindingSet,
 		}, nil
 	}
 
 	policy, err := store.GetRoutingPolicyByEventName(ctx, record.EventName)
 	if errors.Is(err, postgres.ErrNotFound) {
+		if len(record.Channels) > 0 {
+			return resolvedRoute{
+				Channels: record.Channels,
+			}, nil
+		}
 		return resolvedRoute{}, fmt.Errorf("no channels requested and no routing policy for event %s", record.EventName)
 	}
 	if err != nil {
 		return resolvedRoute{}, err
+	}
+	if len(record.Channels) > 0 {
+		return resolvedRoute{
+			Channels:   record.Channels,
+			BindingSet: policy.BindingSet,
+		}, nil
 	}
 	return resolvedRoute{
 		Channels:   policy.Channels,

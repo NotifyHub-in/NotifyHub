@@ -20,6 +20,14 @@ This directory collects the important docs for the notification control plane in
   What is already built and what is still pending for production readiness.
 - [Production Release Plan](/Users/Shaik/notifications/notification-control-plane/docs/production-release-plan.md)
   Detailed production-readiness plan with blockers, workstreams, release gates, and go-live checks.
+- [Deploy Control Plane To Kubernetes](/Users/Shaik/notifications/notification-control-plane/docs/guides/deploy-control-plane-to-kubernetes.md)
+  Step-by-step Kubernetes deployment, secret wiring, Helm install flow, validation checks, and rollback guidance.
+- [Deploy Observability Stack](/Users/Shaik/notifications/notification-control-plane/docs/guides/deploy-observability-stack.md)
+  Separate Prometheus, Grafana, cAdvisor, exporters, and alerting dashboard deployment for the notification control plane.
+- [Channel Setup Checklist](/Users/Shaik/notifications/notification-control-plane/docs/guides/channel-setup-checklist.md)
+  Channel-by-channel setup steps for email, SMS, WhatsApp, push, and webhook without exposing real secret values.
+- [Deploy To Production](/Users/Shaik/notifications/notification-control-plane/docs/guides/deploy-to-production.md)
+  Step-by-step production packaging, Helm install flow, validation checks, and rollback guidance.
 
 ## Operating The Platform
 
@@ -59,4 +67,5 @@ This directory collects the important docs for the notification control plane in
 3. Use the [User And Operator Guides](/Users/Shaik/notifications/notification-control-plane/docs/guides/README.md) if you are onboarding or operating the platform.
 4. Use the [Engineering Docs](/Users/Shaik/notifications/notification-control-plane/docs/engineering/README.md) if you want the implementation details and model interactions.
 5. Use the [Connector Integration Guide](/Users/Shaik/notifications/notification-control-plane/docs/connector-sdk.md) if you want to add a provider.
-6. Use the [Roadmap](/Users/Shaik/notifications/notification-control-plane/docs/roadmap.md) and [Project Status](/Users/Shaik/notifications/notification-control-plane/docs/project-status.md) to understand what is next.
+6. Use the [Deploy To Production](/Users/Shaik/notifications/notification-control-plane/docs/guides/deploy-to-production.md) guide if you are preparing a release.
+7. Use the [Roadmap](/Users/Shaik/notifications/notification-control-plane/docs/roadmap.md) and [Project Status](/Users/Shaik/notifications/notification-control-plane/docs/project-status.md) to understand what is next.

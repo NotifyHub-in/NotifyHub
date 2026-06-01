@@ -31,6 +31,32 @@ You need:
 4. a callback route if the provider uses verified callbacks
 5. the provider dashboard configured to point at the callback URL
 
+## Verification Secret Handling
+
+When the provider expects a shared secret or signature key, keep that secret out of the callback payload and out of the docs.
+
+Store it as a file-backed secret reference and mount it into the callback gateway container.
+
+Example shape:
+
+```json
+{
+  "verification_mode": "shared_secret",
+  "verification_secret_ref": {
+    "ref": "file:///run/notification-secrets/provider_callback_secret.txt",
+    "material_type": "secret_string",
+    "source": "file"
+  }
+}
+```
+
+Practical rules:
+
+- use the same secret value on the provider side and the control plane side
+- mount the secret at runtime rather than hardcoding it in the image
+- rotate the secret by updating the mounted secret and the provider dashboard together
+- if the provider uses HMAC or another signature scheme, store the signing key the same way
+
 ## Step 1: Create A Callback Route
 
 Example:
@@ -66,6 +92,7 @@ If the provider uses a shared secret or signature:
 
 - configure the same secret on the provider side
 - store the matching secret reference in the callback route
+- mount the secret into the callback gateway using the same file path referenced by the route
 
 ## Channel Support Today
 

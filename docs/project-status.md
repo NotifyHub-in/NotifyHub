@@ -156,8 +156,10 @@ Provider selection now works like this:
 
 ### Deployment And Release
 
-- [ ] Add environment-specific configuration strategy beyond local Docker
-- [ ] Add Kubernetes manifests / Helm or equivalent production deployment packaging
+- [x] Add environment-specific configuration strategy beyond local Docker
+  Why: the Helm chart and production deployment guide now separate production values, secret handling, and service wiring from the local Docker compose assumptions.
+- [x] Add Kubernetes manifests / Helm or equivalent production deployment packaging
+  Why: the repository now includes a Helm chart for the API, worker, callback gateway, connectors, and the migration job, plus a production deployment guide and rollback notes.
 - [ ] Add release versioning and changelog discipline
 - [x] Add basic CI checks for tests and formatting
   Why: the repo now runs a baseline GitHub Actions workflow for format checking and the normal Go test suite.
@@ -185,8 +187,8 @@ Provider selection now works like this:
 
 If we resume from here, the highest-value next sequence is:
 
-1. Authentication and broader secret-management integration
-2. Deployment packaging beyond local Docker
-3. Deeper test, chaos, and scaling hardening
-4. Alerting, tracing, and operator runbook maturity
-5. Multi-channel and production-behavior hardening
+1. Release versioning and changelog discipline
+2. CI checks for image builds and broader release validation
+3. Image publishing and release automation
+4. Deeper test, chaos, and scaling hardening
+5. Alerting, tracing, and operator runbook maturity

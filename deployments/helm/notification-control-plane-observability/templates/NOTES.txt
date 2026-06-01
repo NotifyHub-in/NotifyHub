@@ -1,0 +1,13 @@
+Notification Control Plane observability stack installed.
+
+Services:
+- Prometheus: {{ include "notification-control-plane-observability.fullname" . }}-prometheus:9090
+- Grafana: {{ include "notification-control-plane-observability.fullname" . }}-grafana:{{ .Values.grafana.service.port }}
+- Postgres exporter: {{ include "notification-control-plane-observability.fullname" . }}-postgres-exporter:{{ .Values.postgresExporter.service.port }}
+- Kafka exporter: {{ include "notification-control-plane-observability.fullname" . }}-kafka-exporter:{{ .Values.kafkaExporter.service.port }}
+
+Default Grafana login:
+- user: {{ .Values.grafana.adminUser }}
+- password: see the grafana admin secret created by the chart
+
+The dashboards are provisioned automatically from the chart files.

@@ -4,6 +4,10 @@ This guide shows how to connect real delivery providers to the Notification Cont
 
 This is the heart of the managed-provider model.
 
+Provider-account, binding, routing, template, preference, delivery, callback-route, and dead-letter write calls require the `X-Notification-Admin-Token` header. In the default local stack, the token is `integration-admin-token`.
+
+Read-only config and status endpoints accept either `X-Notification-Read-Token` or `X-Notification-Admin-Token`. In the default local stack, the read token is `integration-read-token`.
+
 ## Concepts First
 
 ### Provider Definition

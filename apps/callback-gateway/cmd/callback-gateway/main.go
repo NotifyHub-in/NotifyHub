@@ -60,7 +60,27 @@ func main() {
 				return
 			}
 
+			def, providerKnown := notification.ProviderDefinitionByKey(parts[0])
+			if providerKnown && def.CallbackMode == "none" {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "unsupported"})
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "provider callbacks are not supported"})
+				return
+			}
+
 			route, routeErr := store.GetCallbackRouteByProviderKey(r.Context(), parts[0])
+			if providerKnown && def.CallbackMode != "none" {
+				if routeErr != nil {
+					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "route_missing"})
+					httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "callback route not configured"})
+					return
+				}
+				if !route.Enabled {
+					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "route_disabled"})
+					httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "callback route not configured"})
+					return
+				}
+			}
+
 			if routeErr == nil && route.Enabled {
 				if ok, verifyErr := verifyCallbackRequest(r, rawBody, route); verifyErr != nil {
 					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "verification_failed"})

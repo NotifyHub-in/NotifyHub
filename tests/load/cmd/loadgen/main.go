@@ -23,6 +23,7 @@ import (
 type config struct {
 	apiBaseURL        string
 	callbackBaseURL   string
+	adminAPIToken     string
 	totalRequests     int
 	concurrency       int
 	timeout           time.Duration
@@ -82,6 +83,7 @@ func main() {
 	cfg := config{}
 	flag.StringVar(&cfg.apiBaseURL, "api-base-url", envOrDefault("LOADTEST_API_BASE_URL", "http://localhost:8080"), "Base URL for the notification API")
 	flag.StringVar(&cfg.callbackBaseURL, "callback-base-url", envOrDefault("LOADTEST_CALLBACK_BASE_URL", "http://localhost:8082"), "Base URL for the callback gateway")
+	flag.StringVar(&cfg.adminAPIToken, "admin-api-token", envOrDefault("LOADTEST_ADMIN_API_TOKEN", "integration-admin-token"), "Admin API token for configuration endpoints")
 	flag.IntVar(&cfg.totalRequests, "requests", envInt("LOADTEST_REQUESTS", 240), "Total scenario executions")
 	flag.IntVar(&cfg.concurrency, "concurrency", envInt("LOADTEST_CONCURRENCY", 24), "Number of concurrent workers")
 	flag.DurationVar(&cfg.timeout, "timeout", envDuration("LOADTEST_TIMEOUT", 8*time.Second), "Per-request HTTP timeout")
@@ -691,6 +693,9 @@ func (r *runner) postRaw(ctx context.Context, method string, url string, payload
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if r.cfg.adminAPIToken != "" {
+		req.Header.Set("X-Notification-Admin-Token", r.cfg.adminAPIToken)
+	}
 
 	resp, err := r.client.Do(req)
 	if err != nil {

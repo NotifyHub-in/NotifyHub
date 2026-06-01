@@ -149,6 +149,9 @@ services:
       KAFKA_BROKERS: kafka:9092
       KAFKA_NOTIFICATION_TOPIC: notification.requests
       NOTIFICATION_API_AUTH_REQUIRED: "false"
+      NOTIFICATION_ADMIN_API_AUTH_REQUIRED: "true"
+      NOTIFICATION_ADMIN_API_TOKEN: integration-admin-token
+      NOTIFICATION_READONLY_API_TOKEN: integration-read-token
     depends_on:
       migrate:
         condition: service_completed_successfully

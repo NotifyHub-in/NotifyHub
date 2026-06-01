@@ -22,6 +22,8 @@ type testClient struct {
 	baseURL         string
 	callbackBaseURL string
 	apiKey          string
+	adminToken      string
+	readToken       string
 	client          *http.Client
 }
 
@@ -81,6 +83,65 @@ func TestNotificationRequestAcceptedFlow(t *testing.T) {
 	}
 	if details.DeliveryAttempts[0].Status != notification.DeliveryAttemptAccepted {
 		t.Fatalf("delivery attempt status = %q, want %q", details.DeliveryAttempts[0].Status, notification.DeliveryAttemptAccepted)
+	}
+}
+
+func TestAdminAPIsRequireToken(t *testing.T) {
+	client := requireIntegrationClient(t)
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, client.baseURL+"/v1/provider-definitions", nil)
+	if err != nil {
+		t.Fatalf("build unauthenticated admin request: %v", err)
+	}
+	req.Header.Del("X-Notification-Admin-Token")
+
+	resp, err := client.client.Do(req)
+	if err != nil {
+		t.Fatalf("perform unauthenticated admin request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := ioReadAll(resp)
+	if err != nil {
+		t.Fatalf("read unauthenticated admin response: %v", err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("admin endpoint status = %d, want %d, body=%s", resp.StatusCode, http.StatusUnauthorized, string(body))
+	}
+}
+
+func TestReadOnlyTokenCanReadButCannotWriteAdminAPIs(t *testing.T) {
+	client := requireIntegrationClient(t).readOnlyClient()
+
+	status, body := client.mustRequest(t, http.MethodGet, "/v1/provider-definitions", nil)
+	if status != http.StatusOK {
+		t.Fatalf("read-only provider definitions status = %d, want %d, body=%s", status, http.StatusOK, string(body))
+	}
+
+	writeStatus, writeBody := client.mustJSON(t, http.MethodPost, "/v1/provider-accounts", notification.ProviderAccountUpsertRequest{
+		TenantID:    "tenant-read-only",
+		ProviderKey: "twilio-sms",
+		DisplayName: "Read-only should not write",
+		Channel:     notification.ChannelSMS,
+		Enabled:     true,
+		Config: map[string]string{
+			"from_number": "+14155550123",
+		},
+		SecretRefs: map[string]notification.SecretReference{
+			"account_sid": {
+				Ref:          "secret://tenant/tenant-read-only/twilio/account-sid",
+				MaterialType: notification.MaterialTypeSecretString,
+				Source:       "vault",
+			},
+			"auth_token": {
+				Ref:          "secret://tenant/tenant-read-only/twilio/auth-token",
+				MaterialType: notification.MaterialTypeSecretString,
+				Source:       "vault",
+			},
+		},
+	})
+	if writeStatus != http.StatusForbidden {
+		t.Fatalf("read-only write status = %d, want %d, body=%s", writeStatus, http.StatusForbidden, string(writeBody))
 	}
 }
 
@@ -164,6 +225,18 @@ func TestProviderCallbackMarksDelivered(t *testing.T) {
 	})
 	if delivered.DeliveryAttempts[0].Status != notification.DeliveryAttemptDelivered {
 		t.Fatalf("delivery attempt status = %q, want %q", delivered.DeliveryAttempts[0].Status, notification.DeliveryAttemptDelivered)
+	}
+}
+
+func TestSendgridEmailCallbacksAreRejected(t *testing.T) {
+	client := requireIntegrationClient(t)
+
+	status, body := postRawProviderCallbackJSON(t, client, "sendgrid-email", notification.ProviderCallback{
+		ProviderMessageID: "msg-123",
+		Status:            "delivered",
+	})
+	if status != http.StatusNotFound {
+		t.Fatalf("sendgrid callback status = %d, want %d, body=%s", status, http.StatusNotFound, string(body))
 	}
 }
 
@@ -1049,6 +1122,8 @@ func requireIntegrationClient(t *testing.T) *testClient {
 	client := &testClient{
 		baseURL:         baseURL,
 		callbackBaseURL: callbackBaseURL,
+		adminToken:      envOrDefault("NOTIFICATION_ADMIN_API_TOKEN", "integration-admin-token"),
+		readToken:       envOrDefault("NOTIFICATION_READONLY_API_TOKEN", "integration-read-token"),
 		client:          &http.Client{Timeout: 5 * time.Second},
 	}
 
@@ -1540,6 +1615,12 @@ func (c *testClient) mustRequest(t *testing.T, method string, path string, paylo
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if c.adminToken != "" {
+		req.Header.Set("X-Notification-Admin-Token", c.adminToken)
+	}
+	if c.readToken != "" && c.adminToken == "" {
+		req.Header.Set("X-Notification-Read-Token", c.readToken)
+	}
 	if strings.HasPrefix(path, "/v1/notification-requests") && c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
@@ -1557,8 +1638,23 @@ func (c *testClient) mustRequest(t *testing.T, method string, path string, paylo
 	return resp.StatusCode, body
 }
 
+func (c *testClient) readOnlyClient() *testClient {
+	clone := *c
+	clone.adminToken = ""
+	clone.readToken = c.readToken
+	clone.apiKey = ""
+	return &clone
+}
+
 func uniqueKey(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UTC().UnixNano())
+}
+
+func envOrDefault(key string, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func ioReadAll(resp *http.Response) ([]byte, error) {

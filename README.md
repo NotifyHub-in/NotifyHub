@@ -18,6 +18,7 @@ The current platform already supports:
 - provider health tracking and `gobreaker`-backed circuit breakers
 - provider callback normalization and outbound lifecycle webhooks
 - Prometheus/Grafana metrics, Kafka UI, and Adminer
+  - local Docker observability stack
 - unit tests, live integration tests, and a basic CI workflow
 
 For the build log and production-readiness checklist, see [docs/project-status.md](/Users/Shaik/notifications/notification-control-plane/docs/project-status.md).
@@ -46,7 +47,7 @@ The control plane decides:
   Async reconciliation engine that evaluates policy, renders content, dispatches connectors, schedules retries, and manages circuit-breaker state.
 - `callback-gateway`
   Normalizes provider callbacks into delivery-attempt and request-status updates.
-- `connector-email`, `connector-sms`, `connector-webhook`
+- `connector-email`, `connector-sms`, `connector-webhook`, `connector-push`, `connector-whatsapp`
   Reference out-of-process provider adapters.
 - `migrate`
   Versioned SQL migration runner used by Docker and local commands.
@@ -70,6 +71,7 @@ libs/
   observability/
   storage/
 deployments/docker/
+deployments/helm/
 docs/
   api/
   architecture/
@@ -181,6 +183,8 @@ make load-test
 - Architecture notes: [docs/architecture/v1.md](/Users/Shaik/notifications/notification-control-plane/docs/architecture/v1.md)
 - Current project status: [docs/project-status.md](/Users/Shaik/notifications/notification-control-plane/docs/project-status.md)
 - Operator guide: [docs/operator-guide.md](/Users/Shaik/notifications/notification-control-plane/docs/operator-guide.md)
+- Production deployment guide: [docs/guides/deploy-to-production.md](/Users/Shaik/notifications/notification-control-plane/docs/guides/deploy-to-production.md)
+- Observability deployment guide: [docs/guides/deploy-observability-stack.md](/Users/Shaik/notifications/notification-control-plane/docs/guides/deploy-observability-stack.md)
 - Connector extension guide: [docs/connector-sdk.md](/Users/Shaik/notifications/notification-control-plane/docs/connector-sdk.md)
 - Roadmap: [docs/roadmap.md](/Users/Shaik/notifications/notification-control-plane/docs/roadmap.md)
 
@@ -196,12 +200,22 @@ Key endpoints currently exposed by `api`:
 
 - `POST /v1/notification-requests`
 - `GET /v1/notification-requests/{requestID}`
+- `GET /v1/provider-definitions`
+- `GET /v1/provider-accounts`
+- `GET /v1/provider-accounts/{providerAccountID}`
+- `GET /v1/provider-accounts/{providerAccountID}/status`
+- `POST /v1/provider-accounts`
+- `PATCH /v1/provider-accounts/{providerAccountID}`
+- `POST /v1/provider-accounts/{providerAccountID}/disable`
 - `GET /v1/provider-bindings`
 - `GET /v1/provider-bindings/{channel}`
 - `POST /v1/provider-bindings`
 - `GET /v1/provider-binding-health`
 - `GET /v1/provider-binding-health/{bindingID}`
 - `POST /v1/provider-binding-health/{bindingID}/reset`
+- `GET /v1/callback-routes`
+- `GET /v1/callback-routes/{providerKey}`
+- `POST /v1/callback-routes`
 - `GET /v1/routing-policies`
 - `GET /v1/preference-policies`
 - `GET /v1/templates`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -44,6 +45,9 @@ func main() {
 	postgres.AttachMetrics(registry)
 	notifier := webhooks.NewNotifier(store)
 	authRequired := config.GetEnv("NOTIFICATION_API_AUTH_REQUIRED", "true") == "true"
+	adminAuthRequired := config.GetEnv("NOTIFICATION_ADMIN_API_AUTH_REQUIRED", "true") == "true"
+	adminAPIToken := config.GetEnv("NOTIFICATION_ADMIN_API_TOKEN", "")
+	readOnlyAPIToken := config.GetEnv("NOTIFICATION_READONLY_API_TOKEN", "")
 
 	brokers := config.MustGetEnv("KAFKA_BROKERS")
 	topic := config.GetEnv("KAFKA_NOTIFICATION_TOPIC", "notification.requests")
@@ -55,7 +59,24 @@ func main() {
 	defer publisher.Close()
 
 	err = app.RunHTTPService(cfg, logger, registry, func(mux *http.ServeMux, info serviceinfo.Info, registry *metrics.Registry) {
-		mux.HandleFunc("POST /v1/clients", func(w http.ResponseWriter, r *http.Request) {
+		protect := func(requiredRole authRole, resource string, action string, handler func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				role, err := authenticateControlPlaneRequest(r, adminAPIToken, readOnlyAPIToken, adminAuthRequired)
+				if err != nil {
+					recordAdminAPIEvent(registry, resource, action, "unauthorized")
+					httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+					return
+				}
+				if requiredRole == authRoleAdmin && role != authRoleAdmin {
+					recordAdminAPIEvent(registry, resource, action, "forbidden")
+					httpx.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "admin token required"})
+					return
+				}
+				handler(w, r)
+			}
+		}
+
+		mux.HandleFunc("POST /v1/clients", protect(authRoleAdmin, "client", "create", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.NotificationClientCreateRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
 				recordAdminAPIEvent(registry, "client", "create", "invalid_payload")
@@ -102,9 +123,9 @@ func main() {
 				Client: created,
 				APIKey: apiKey,
 			})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/clients", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/clients", protect(authRoleRead, "client", "list", func(w http.ResponseWriter, r *http.Request) {
 			tenantID := r.URL.Query().Get("tenant_id")
 			clients, err := store.ListNotificationClients(r.Context(), tenantID)
 			if err != nil {
@@ -113,9 +134,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"clients": clients})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/clients/{clientID}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/clients/{clientID}", protect(authRoleRead, "client", "get", func(w http.ResponseWriter, r *http.Request) {
 			clientID := r.PathValue("clientID")
 			client, err := store.GetNotificationClient(r.Context(), clientID)
 			if errors.Is(err, postgres.ErrNotFound) {
@@ -128,9 +149,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, client)
-		})
+		}))
 
-		mux.HandleFunc("POST /v1/clients/{clientID}/disable", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("POST /v1/clients/{clientID}/disable", protect(authRoleAdmin, "client", "disable", func(w http.ResponseWriter, r *http.Request) {
 			clientID := r.PathValue("clientID")
 			client, err := store.GetNotificationClient(r.Context(), clientID)
 			if errors.Is(err, postgres.ErrNotFound) {
@@ -155,7 +176,7 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, updated)
-		})
+		}))
 
 		mux.HandleFunc("POST /v1/notification-requests", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.NotificationRequest
@@ -291,7 +312,7 @@ func main() {
 			})
 		})
 
-		mux.HandleFunc("GET /v1/provider-bindings", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/provider-bindings", protect(authRoleRead, "provider_binding", "list", func(w http.ResponseWriter, r *http.Request) {
 			bindings, err := store.ListProviderBindings(r.Context())
 			if err != nil {
 				logger.Error("list provider bindings failed", "error", err)
@@ -299,13 +320,13 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"provider_bindings": bindings})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/provider-definitions", func(w http.ResponseWriter, _ *http.Request) {
+		mux.HandleFunc("GET /v1/provider-definitions", protect(authRoleRead, "provider_definition", "list", func(w http.ResponseWriter, _ *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"provider_definitions": notification.ProviderDefinitions()})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/provider-accounts", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/provider-accounts", protect(authRoleRead, "provider_account", "list", func(w http.ResponseWriter, r *http.Request) {
 			tenantID := r.URL.Query().Get("tenant_id")
 			accounts, err := store.ListProviderAccounts(r.Context(), tenantID)
 			if err != nil {
@@ -314,9 +335,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"provider_accounts": accounts})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/provider-accounts/{providerAccountID}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/provider-accounts/{providerAccountID}", protect(authRoleRead, "provider_account", "get", func(w http.ResponseWriter, r *http.Request) {
 			providerAccountID := r.PathValue("providerAccountID")
 			account, err := store.GetProviderAccount(r.Context(), providerAccountID)
 			if errors.Is(err, postgres.ErrNotFound) {
@@ -329,9 +350,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, account)
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/provider-accounts/{providerAccountID}/status", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/provider-accounts/{providerAccountID}/status", protect(authRoleRead, "provider_account", "status", func(w http.ResponseWriter, r *http.Request) {
 			providerAccountID := r.PathValue("providerAccountID")
 			account, err := store.GetProviderAccount(r.Context(), providerAccountID)
 			if errors.Is(err, postgres.ErrNotFound) {
@@ -386,9 +407,9 @@ func main() {
 				"binding_health":    bindingHealth,
 				"callback_route":    callbackRoute,
 			})
-		})
+		}))
 
-		mux.HandleFunc("POST /v1/provider-accounts", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("POST /v1/provider-accounts", protect(authRoleAdmin, "provider_account", "create", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.ProviderAccountUpsertRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
 				recordAdminAPIEvent(registry, "provider_account", "create", "invalid_payload")
@@ -426,9 +447,9 @@ func main() {
 			}
 			recordAdminAPIEvent(registry, "provider_account", "create", "accepted")
 			httpx.WriteJSON(w, http.StatusCreated, saved)
-		})
+		}))
 
-		mux.HandleFunc("PATCH /v1/provider-accounts/{providerAccountID}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("PATCH /v1/provider-accounts/{providerAccountID}", protect(authRoleAdmin, "provider_account", "patch", func(w http.ResponseWriter, r *http.Request) {
 			providerAccountID := r.PathValue("providerAccountID")
 			existing, err := store.GetProviderAccount(r.Context(), providerAccountID)
 			if errors.Is(err, postgres.ErrNotFound) {
@@ -483,9 +504,9 @@ func main() {
 			}
 			recordAdminAPIEvent(registry, "provider_account", "patch", "accepted")
 			httpx.WriteJSON(w, http.StatusOK, saved)
-		})
+		}))
 
-		mux.HandleFunc("POST /v1/provider-accounts/{providerAccountID}/disable", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("POST /v1/provider-accounts/{providerAccountID}/disable", protect(authRoleAdmin, "provider_account", "disable", func(w http.ResponseWriter, r *http.Request) {
 			providerAccountID := r.PathValue("providerAccountID")
 			if err := store.DisableProviderAccount(r.Context(), providerAccountID); errors.Is(err, postgres.ErrNotFound) {
 				recordAdminAPIEvent(registry, "provider_account", "disable", "not_found")
@@ -507,9 +528,9 @@ func main() {
 			}
 			recordAdminAPIEvent(registry, "provider_account", "disable", "accepted")
 			httpx.WriteJSON(w, http.StatusOK, account)
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/callback-routes", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/callback-routes", protect(authRoleRead, "callback_route", "list", func(w http.ResponseWriter, r *http.Request) {
 			routes, err := store.ListCallbackRoutes(r.Context())
 			if err != nil {
 				logger.Error("list callback routes failed", "error", err)
@@ -517,9 +538,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"callback_routes": routes})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/callback-routes/{providerKey}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/callback-routes/{providerKey}", protect(authRoleRead, "callback_route", "get", func(w http.ResponseWriter, r *http.Request) {
 			providerKey := r.PathValue("providerKey")
 			route, err := store.GetCallbackRouteByProviderKey(r.Context(), providerKey)
 			if errors.Is(err, postgres.ErrNotFound) {
@@ -532,9 +553,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, route)
-		})
+		}))
 
-		mux.HandleFunc("POST /v1/callback-routes", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("POST /v1/callback-routes", protect(authRoleAdmin, "callback_route", "create", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.CallbackRouteUpsertRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
 				recordAdminAPIEvent(registry, "callback_route", "create", "invalid_payload")
@@ -595,9 +616,9 @@ func main() {
 			}
 			recordAdminAPIEvent(registry, "callback_route", "create", "accepted")
 			httpx.WriteJSON(w, http.StatusCreated, saved)
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/provider-bindings/{channel}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/provider-bindings/{channel}", protect(authRoleRead, "provider_binding", "get", func(w http.ResponseWriter, r *http.Request) {
 			channel := notification.Channel(r.PathValue("channel"))
 			bindingSet := r.URL.Query().Get("binding_set")
 			bindings, err := store.ListProviderBindingsByChannel(r.Context(), channel, bindingSet)
@@ -615,9 +636,9 @@ func main() {
 				"binding_set":       bindingSet,
 				"provider_bindings": bindings,
 			})
-		})
+		}))
 
-		mux.HandleFunc("POST /v1/provider-bindings", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("POST /v1/provider-bindings", protect(authRoleAdmin, "provider_binding", "create", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.ProviderBindingUpsertRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
 				recordAdminAPIEvent(registry, "provider_binding", "create", "invalid_payload")
@@ -687,9 +708,9 @@ func main() {
 			}
 			recordAdminAPIEvent(registry, "provider_binding", "create", "accepted")
 			httpx.WriteJSON(w, http.StatusOK, saved)
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/provider-binding-health", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/provider-binding-health", protect(authRoleRead, "provider_binding", "health_list", func(w http.ResponseWriter, r *http.Request) {
 			healthRecords, err := store.ListProviderBindingHealth(r.Context())
 			if err != nil {
 				logger.Error("list provider binding health failed", "error", err)
@@ -697,9 +718,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"provider_binding_health": healthRecords})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/provider-binding-health/{bindingID}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/provider-binding-health/{bindingID}", protect(authRoleRead, "provider_binding", "health_get", func(w http.ResponseWriter, r *http.Request) {
 			bindingID := r.PathValue("bindingID")
 			healthRecord, err := store.GetProviderBindingHealth(r.Context(), bindingID)
 			if errors.Is(err, postgres.ErrNotFound) {
@@ -712,9 +733,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, healthRecord)
-		})
+		}))
 
-		mux.HandleFunc("POST /v1/provider-binding-health/{bindingID}/reset", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("POST /v1/provider-binding-health/{bindingID}/reset", protect(authRoleAdmin, "provider_binding", "health_reset", func(w http.ResponseWriter, r *http.Request) {
 			bindingID := r.PathValue("bindingID")
 			if err := store.ResetProviderBindingHealth(r.Context(), bindingID); errors.Is(err, postgres.ErrNotFound) {
 				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "provider binding health not found"})
@@ -739,9 +760,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, healthRecord)
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/routing-policies", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/routing-policies", protect(authRoleRead, "routing_policy", "list", func(w http.ResponseWriter, r *http.Request) {
 			policies, err := store.ListRoutingPolicies(r.Context())
 			if err != nil {
 				logger.Error("list routing policies failed", "error", err)
@@ -749,9 +770,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"routing_policies": policies})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/routing-policies/{eventName}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/routing-policies/{eventName}", protect(authRoleRead, "routing_policy", "get", func(w http.ResponseWriter, r *http.Request) {
 			eventName := r.PathValue("eventName")
 			policy, err := store.GetRoutingPolicyByEventName(r.Context(), eventName)
 			if errors.Is(err, postgres.ErrNotFound) {
@@ -764,9 +785,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, policy)
-		})
+		}))
 
-		mux.HandleFunc("POST /v1/routing-policies", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("POST /v1/routing-policies", protect(authRoleAdmin, "routing_policy", "create", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.RoutingPolicyUpsertRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid routing policy payload"})
@@ -798,9 +819,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, saved)
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/preference-policies", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/preference-policies", protect(authRoleRead, "preference_policy", "list", func(w http.ResponseWriter, r *http.Request) {
 			userID := r.URL.Query().Get("user_id")
 			policies, err := store.ListPreferencePolicies(r.Context(), userID)
 			if err != nil {
@@ -809,9 +830,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"preference_policies": policies})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/preference-policies/{userID}/{channel}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/preference-policies/{userID}/{channel}", protect(authRoleRead, "preference_policy", "get", func(w http.ResponseWriter, r *http.Request) {
 			userID := r.PathValue("userID")
 			channel := notification.Channel(r.PathValue("channel"))
 			policy, err := store.GetPreferencePolicy(r.Context(), userID, channel)
@@ -825,9 +846,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, policy)
-		})
+		}))
 
-		mux.HandleFunc("POST /v1/preference-policies", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("POST /v1/preference-policies", protect(authRoleAdmin, "preference_policy", "create", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.PreferencePolicyUpsertRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid preference policy payload"})
@@ -857,9 +878,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, saved)
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/templates", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/templates", protect(authRoleRead, "template", "list", func(w http.ResponseWriter, r *http.Request) {
 			templates, err := store.ListTemplates(r.Context())
 			if err != nil {
 				logger.Error("list templates failed", "error", err)
@@ -867,9 +888,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"templates": templates})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/templates/{templateKey}/{channel}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/templates/{templateKey}/{channel}", protect(authRoleRead, "template", "get", func(w http.ResponseWriter, r *http.Request) {
 			templateKey := r.PathValue("templateKey")
 			channel := notification.Channel(r.PathValue("channel"))
 			languageCode := notification.NormalizeLanguageCode(r.URL.Query().Get("language_code"))
@@ -884,9 +905,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, tmpl)
-		})
+		}))
 
-		mux.HandleFunc("POST /v1/templates", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("POST /v1/templates", protect(authRoleAdmin, "template", "create", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.TemplateUpsertRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid template payload"})
@@ -928,9 +949,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, saved)
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/delivery-policies", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/delivery-policies", protect(authRoleRead, "delivery_policy", "list", func(w http.ResponseWriter, r *http.Request) {
 			policies, err := store.ListDeliveryPolicies(r.Context())
 			if err != nil {
 				logger.Error("list delivery policies failed", "error", err)
@@ -938,9 +959,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"delivery_policies": policies})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/delivery-policies/{channel}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/delivery-policies/{channel}", protect(authRoleRead, "delivery_policy", "get", func(w http.ResponseWriter, r *http.Request) {
 			channel := notification.Channel(r.PathValue("channel"))
 			policy, err := store.GetDeliveryPolicyByChannel(r.Context(), channel)
 			if errors.Is(err, postgres.ErrNotFound) {
@@ -953,9 +974,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, policy)
-		})
+		}))
 
-		mux.HandleFunc("POST /v1/delivery-policies", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("POST /v1/delivery-policies", protect(authRoleAdmin, "delivery_policy", "create", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.DeliveryPolicyUpsertRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid delivery policy payload"})
@@ -986,9 +1007,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, saved)
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/webhook-subscriptions", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/webhook-subscriptions", protect(authRoleRead, "webhook_subscription", "list", func(w http.ResponseWriter, r *http.Request) {
 			subscriptions, err := store.ListWebhookSubscriptions(r.Context())
 			if err != nil {
 				logger.Error("list webhook subscriptions failed", "error", err)
@@ -996,9 +1017,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"webhook_subscriptions": subscriptions})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/webhook-subscriptions/{subscriptionID}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/webhook-subscriptions/{subscriptionID}", protect(authRoleRead, "webhook_subscription", "get", func(w http.ResponseWriter, r *http.Request) {
 			subscriptionID := r.PathValue("subscriptionID")
 			subscription, err := store.GetWebhookSubscriptionByID(r.Context(), subscriptionID)
 			if errors.Is(err, postgres.ErrNotFound) {
@@ -1011,9 +1032,9 @@ func main() {
 				return
 			}
 			httpx.WriteJSON(w, http.StatusOK, subscription)
-		})
+		}))
 
-		mux.HandleFunc("POST /v1/webhook-subscriptions", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("POST /v1/webhook-subscriptions", protect(authRoleAdmin, "webhook_subscription", "create", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.WebhookSubscriptionUpsertRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid webhook subscription payload"})
@@ -1048,9 +1069,9 @@ func main() {
 				}
 			}
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload webhook subscription"})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/notification-requests/{requestID}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/notification-requests/{requestID}", protect(authRoleRead, "notification_request", "get", func(w http.ResponseWriter, r *http.Request) {
 			requestID := r.PathValue("requestID")
 			record, err := store.GetNotificationRequest(r.Context(), requestID)
 			if errors.Is(err, postgres.ErrNotFound) {
@@ -1098,9 +1119,9 @@ func main() {
 				"dead_letters":              deadLetters,
 				"webhook_delivery_attempts": webhookAttempts,
 			})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/dead-letters", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/dead-letters", protect(authRoleRead, "dead_letter", "list", func(w http.ResponseWriter, r *http.Request) {
 			deadLetters, err := store.ListDeadLetterNotifications(r.Context(), "")
 			if err != nil {
 				registry.IncCounter("dead_letter_api_events_total", "Dead-letter API outcomes.", map[string]string{"action": "list", "outcome": "load_failed"})
@@ -1110,9 +1131,9 @@ func main() {
 			}
 			registry.IncCounter("dead_letter_api_events_total", "Dead-letter API outcomes.", map[string]string{"action": "list", "outcome": "ok"})
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"dead_letters": deadLetters})
-		})
+		}))
 
-		mux.HandleFunc("GET /v1/dead-letters/{deadLetterID}", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /v1/dead-letters/{deadLetterID}", protect(authRoleRead, "dead_letter", "get", func(w http.ResponseWriter, r *http.Request) {
 			deadLetterID := r.PathValue("deadLetterID")
 			deadLetter, err := store.GetDeadLetterNotificationByID(r.Context(), deadLetterID)
 			if errors.Is(err, postgres.ErrNotFound) {
@@ -1128,9 +1149,9 @@ func main() {
 			}
 			registry.IncCounter("dead_letter_api_events_total", "Dead-letter API outcomes.", map[string]string{"action": "get", "outcome": "ok"})
 			httpx.WriteJSON(w, http.StatusOK, deadLetter)
-		})
+		}))
 
-		mux.HandleFunc("POST /v1/dead-letters/{deadLetterID}/replay", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("POST /v1/dead-letters/{deadLetterID}/replay", protect(authRoleAdmin, "dead_letter", "replay", func(w http.ResponseWriter, r *http.Request) {
 			deadLetterID := r.PathValue("deadLetterID")
 			deadLetter, err := store.GetDeadLetterNotificationByID(r.Context(), deadLetterID)
 			if errors.Is(err, postgres.ErrNotFound) {
@@ -1204,7 +1225,7 @@ func main() {
 				Status:     notification.RequestStatusAccepted,
 				AcceptedAt: now,
 			})
-		})
+		}))
 
 		mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -1281,6 +1302,37 @@ func authenticateNotificationRequest(r *http.Request, store *postgres.Store, aut
 		return notification.NotificationClient{}, fmt.Errorf("notification client disabled")
 	}
 	return client, nil
+}
+
+type authRole string
+
+const (
+	authRoleRead  authRole = "read"
+	authRoleAdmin authRole = "admin"
+)
+
+func authenticateControlPlaneRequest(r *http.Request, adminToken string, readToken string, authRequired bool) (authRole, error) {
+	if adminToken != "" {
+		if got := strings.TrimSpace(r.Header.Get("X-Notification-Admin-Token")); got != "" {
+			if subtle.ConstantTimeCompare([]byte(got), []byte(adminToken)) == 1 {
+				return authRoleAdmin, nil
+			}
+		}
+	}
+	if readToken != "" {
+		if got := strings.TrimSpace(r.Header.Get("X-Notification-Read-Token")); got != "" {
+			if subtle.ConstantTimeCompare([]byte(got), []byte(readToken)) == 1 {
+				return authRoleRead, nil
+			}
+		}
+	}
+	if !authRequired {
+		return authRoleAdmin, nil
+	}
+	if adminToken == "" && readToken == "" {
+		return "", fmt.Errorf("admin api auth not configured")
+	}
+	return "", fmt.Errorf("invalid control plane api token")
 }
 
 func generateNotificationClientAPIKey() (string, string) {

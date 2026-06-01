@@ -64,6 +64,12 @@ After the stack starts:
 - `worker` should report healthy and consume from Kafka
 - Grafana and Prometheus should show service targets as up
 
+Admin/config write calls must include `X-Notification-Admin-Token`. In the default local stack, the token is `integration-admin-token`.
+
+Read-only config and status calls can use `X-Notification-Read-Token` or the admin token. In the default local stack, the read token is `integration-read-token`.
+
+For production packaging and rollback flow, use [Deploy To Production](/Users/Shaik/notifications/notification-control-plane/docs/guides/deploy-to-production.md).
+
 ## AFS-Admin Push Setup
 
 This control plane already supports push generically through the `fcm-push` provider. For the AFS-admin Firebase project, keep the setup on the same managed-provider pattern as the CE farm push integration: mount the control-plane secret directory into `connector-push`, register a file-backed provider account, and wire routing through the API.

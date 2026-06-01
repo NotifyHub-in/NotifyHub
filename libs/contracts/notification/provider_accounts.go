@@ -22,7 +22,7 @@ type ProviderDefinition struct {
 	AdapterKey           string                  `json:"adapter_key"`
 	Description          string                  `json:"description,omitempty"`
 	RequiredConfigSchema map[string]MaterialType `json:"required_config_schema"`
-	ConfigVariants       []ProviderConfigVariant  `json:"config_variants,omitempty"`
+	ConfigVariants       []ProviderConfigVariant `json:"config_variants,omitempty"`
 	CallbackMode         string                  `json:"callback_mode,omitempty"`
 }
 
@@ -119,7 +119,7 @@ var providerDefinitions = []ProviderDefinition{
 		RequiredConfigSchema: map[string]MaterialType{
 			"api_key":   MaterialTypeSecretString,
 			"sender_id": MaterialTypePlainString,
-			"base_url": MaterialTypePlainString,
+			"base_url":  MaterialTypePlainString,
 		},
 		ConfigVariants: []ProviderConfigVariant{
 			{
@@ -180,7 +180,7 @@ var providerDefinitions = []ProviderDefinition{
 			"from_email": MaterialTypePlainString,
 			"api_key":    MaterialTypeSecretString,
 		},
-		CallbackMode: "provider_callback",
+		CallbackMode: "none",
 	},
 	{
 		ProviderKey:   "smtp-email",

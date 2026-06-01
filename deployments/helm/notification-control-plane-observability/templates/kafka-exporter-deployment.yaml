@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+{{- if not .Values.kafkaExporter.brokersCSV }}
+{{- fail "kafkaExporter.brokersCSV is required" }}
+{{- end }}
+metadata:
+  name: {{ include "notification-control-plane-observability.fullname" . }}-kafka-exporter
+  namespace: {{ .Values.exportersNamespace }}
+  labels:
+    {{- include "notification-control-plane-observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafka-exporter
+spec:
+  replicas: {{ .Values.kafkaExporter.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "notification-control-plane-observability.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: kafka-exporter
+  template:
+    metadata:
+      labels:
+        {{- include "notification-control-plane-observability.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: kafka-exporter
+    spec:
+      containers:
+        - name: kafka-exporter
+          image: "{{ .Values.kafkaExporter.image.repository }}:{{ .Values.kafkaExporter.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - --kafka.server={{ .Values.kafkaExporter.brokersCSV }}
+            - --group.filter={{ .Values.kafkaExporter.groupFilter }}
+            - --topic.filter={{ .Values.kafkaExporter.topicFilter }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.kafkaExporter.service.port }}
+          resources:
+            {{- toYaml .Values.kafkaExporter.resources | nindent 12 }}

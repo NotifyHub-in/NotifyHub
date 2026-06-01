@@ -1,0 +1,17 @@
+Notification Control Plane has been installed.
+
+Core services:
+- API: {{ include "notification-control-plane.componentName" (list . "api") }}
+- Worker: {{ include "notification-control-plane.componentName" (list . "worker") }}
+- Callback gateway: {{ include "notification-control-plane.componentName" (list . "callback-gateway") }}
+
+Release flow:
+1. Helm runs the pre-install / pre-upgrade migration job.
+2. API, worker, callback gateway, and connectors roll out.
+3. Verify `/healthz` on each service.
+4. Run a smoke notification request after the rollout.
+
+Rollback guidance:
+- Use `helm rollback` for app/config regressions.
+- For schema changes, prefer a forward fix if the latest migration is not rollback-safe.
+- Re-run the migration job with the corrected release once the code or schema is fixed.

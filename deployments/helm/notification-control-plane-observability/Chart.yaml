@@ -1,0 +1,6 @@
+apiVersion: v2
+name: notification-control-plane-observability
+description: Prometheus and Grafana stack for the Notification Control Plane
+type: application
+version: 0.1.0
+appVersion: "dev"

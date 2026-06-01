@@ -368,20 +368,25 @@ func (gupshupSMSAdapter) build(req notification.ConnectorSendRequest) (providerO
 		}
 	}
 	query := url.Values{}
-	query.Set("method", "sendMessage")
-	query.Set("msg", req.Body)
-	query.Set("priority", "8")
-	query.Set("v", version)
-	query.Set("userid", username)
-	query.Set("password", password)
-	query.Set("send_to", normalizeSMSDestination(req.Destination))
-	query.Set("format", "text")
-	query.Set("channel", "sms")
-	parsed, _ := url.Parse(endpoint)
-	parsed.RawQuery = query.Encode()
-	return providerOutboundRequest{
-		URL:    parsed.String(),
-		Method: http.MethodGet,
+		query.Set("method", "sendMessage")
+		query.Set("msg", req.Body)
+		query.Set("priority", "8")
+		query.Set("v", version)
+		query.Set("userid", username)
+		query.Set("password", password)
+		query.Set("send_to", normalizeSMSDestination(req.Destination))
+		if isUnicodeSMSRequest(req) {
+			query.Set("unicode", "1")
+			query.Set("msg_type", "Unicode_Text")
+		} else {
+			query.Set("format", "text")
+			query.Set("channel", "sms")
+		}
+		parsed, _ := url.Parse(endpoint)
+		parsed.RawQuery = query.Encode()
+		return providerOutboundRequest{
+			URL:    parsed.String(),
+			Method: http.MethodGet,
 		Headers: map[string]string{
 			"Accept": "*/*",
 		},
@@ -615,6 +620,20 @@ func normalizeSMSDestination(value string) string {
 	value = strings.TrimPrefix(value, "+")
 	return value
 }
+
+func isUnicodeSMSRequest(req notification.ConnectorSendRequest) bool {
+	if code := notification.NormalizeLanguageCode(req.LanguageCode); code != "" && code != notification.DefaultLanguageCode {
+		return true
+	}
+	for _, r := range req.Body {
+		if r > unicodeMaxASCII {
+			return true
+		}
+	}
+	return false
+}
+
+const unicodeMaxASCII = 127
 
 func joinProviderURL(baseURL string, path string) (string, error) {
 	parsed, err := url.Parse(baseURL)

@@ -356,7 +356,7 @@ func fcmProviderErrorFromHTTPResponse(statusCode int, responseBody string) *fcmA
 	default:
 		return &fcmAdapterError{
 			statusCode:     statusCode,
-			message:        "push provider temporary outage",
+			message:        "push provider temporary outage: " + trimResponse(responseBody),
 			code:           "provider_outage",
 			classification: notification.FailureClassTransient,
 			retryable:      true,
