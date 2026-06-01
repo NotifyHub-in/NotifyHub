@@ -3,22 +3,30 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
-	"github.com/your-org/notification-control-plane/libs/core/app"
-	"github.com/your-org/notification-control-plane/libs/core/config"
-	"github.com/your-org/notification-control-plane/libs/core/httpx"
-	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
-	"github.com/your-org/notification-control-plane/libs/observability/logging"
-	"github.com/your-org/notification-control-plane/libs/observability/metrics"
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/app"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/httpx"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/secrets"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/serviceinfo"
+	"github.com/Arunshaik2001/notification-control-plane/libs/observability/logging"
+	"github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
 )
 
 func main() {
@@ -28,9 +36,10 @@ func main() {
 	}
 
 	logger := logging.New(cfg.ServiceName)
+	registry := metrics.NewRegistry(cfg.ServiceName)
 	providerClient := &http.Client{Timeout: 5 * time.Second}
 
-	err = app.RunHTTPService(cfg, logger, nil, func(mux *http.ServeMux, info serviceinfo.Info, _ *metrics.Registry) {
+	err = app.RunHTTPService(cfg, logger, registry, func(mux *http.ServeMux, info serviceinfo.Info, registry *metrics.Registry) {
 		mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, notification.ConnectorCapabilities{
 				Name:     "push",
@@ -40,6 +49,7 @@ func main() {
 		mux.HandleFunc("POST /v1/send", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.ConnectorSendRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": "unknown", "outcome": "invalid_payload"})
 				httpx.WriteJSON(w, http.StatusBadRequest, notification.ConnectorErrorResponse{
 					Error:          "invalid connector send payload",
 					Code:           "invalid_payload",
@@ -49,7 +59,18 @@ func main() {
 			}
 
 			adapter := fcmAdapter{}
+			if err := resolvePushProviderConfig(&req); err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "provider_config_resolution_failed"})
+				httpx.WriteJSON(w, err.statusCode, notification.ConnectorErrorResponse{
+					Error:          err.message,
+					Code:           err.code,
+					Classification: err.classification,
+					Retryable:      err.retryable,
+				})
+				return
+			}
 			if err := adapter.validate(req); err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "validation_failed"})
 				httpx.WriteJSON(w, err.statusCode, notification.ConnectorErrorResponse{
 					Error:          err.message,
 					Code:           err.code,
@@ -61,6 +82,7 @@ func main() {
 
 			outbound, buildErr := adapter.build(req)
 			if buildErr != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "build_failed"})
 				httpx.WriteJSON(w, buildErr.statusCode, notification.ConnectorErrorResponse{
 					Error:          buildErr.message,
 					Code:           buildErr.code,
@@ -70,8 +92,11 @@ func main() {
 				return
 			}
 
+			sendStarted := time.Now()
 			messageID, sendErr := adapter.send(r.Context(), providerClient, outbound)
 			if sendErr != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "send_failed", "classification": string(sendErr.classification)})
+				registry.ObserveHistogram("connector_provider_request_duration_seconds", "Outbound provider request duration in seconds.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "send_failed"}, metrics.DefaultLatencyBuckets(), time.Since(sendStarted).Seconds())
 				httpx.WriteJSON(w, sendErr.statusCode, notification.ConnectorErrorResponse{
 					Error:          sendErr.message,
 					Code:           sendErr.code,
@@ -80,6 +105,8 @@ func main() {
 				})
 				return
 			}
+			registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "accepted"})
+			registry.ObserveHistogram("connector_provider_request_duration_seconds", "Outbound provider request duration in seconds.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "accepted"}, metrics.DefaultLatencyBuckets(), time.Since(sendStarted).Seconds())
 
 			logger.Info("sent push provider request", "request_id", req.RequestID, "provider", req.ProviderKey, "endpoint", outbound.URL)
 			httpx.WriteJSON(w, http.StatusAccepted, notification.ConnectorSendResponse{
@@ -137,6 +164,20 @@ type fcmNotification struct {
 	Body  string `json:"body,omitempty"`
 }
 
+func resolvePushProviderConfig(req *notification.ConnectorSendRequest) *fcmAdapterError {
+	resolved, err := secrets.ResolveConfig(req.ProviderConfig, req.ProviderSecretRefs)
+	if err != nil {
+		return &fcmAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "failed to resolve provider secrets: " + err.Error(),
+			code:           "provider_secret_resolution_failed",
+			classification: notification.FailureClassMisconfigured,
+		}
+	}
+	req.ProviderConfig = resolved
+	return nil
+}
+
 func (fcmAdapter) validate(req notification.ConnectorSendRequest) *fcmAdapterError {
 	if req.Destination == "" {
 		return &fcmAdapterError{
@@ -160,24 +201,6 @@ func (fcmAdapter) validate(req notification.ConnectorSendRequest) *fcmAdapterErr
 			message:        "provider rejected push credentials",
 			code:           "invalid_credentials",
 			classification: notification.FailureClassUnauthorized,
-		}
-	}
-	switch req.Metadata["simulate_failure"] {
-	case "rate_limit":
-		return &fcmAdapterError{
-			statusCode:     http.StatusTooManyRequests,
-			message:        "push provider rate limited the request",
-			code:           "rate_limited",
-			classification: notification.FailureClassRateLimited,
-			retryable:      true,
-		}
-	case "provider_outage":
-		return &fcmAdapterError{
-			statusCode:     http.StatusBadGateway,
-			message:        "push provider temporary outage",
-			code:           "provider_outage",
-			classification: notification.FailureClassTransient,
-			retryable:      true,
 		}
 	}
 	return nil
@@ -355,7 +378,113 @@ func extractAccessToken(serviceAccountJSON string) string {
 	if value, ok := parsed["server_key"].(string); ok && value != "" {
 		return value
 	}
-	return ""
+	return accessTokenFromServiceAccount(parsed)
+}
+
+func accessTokenFromServiceAccount(serviceAccount map[string]any) string {
+	clientEmail, _ := serviceAccount["client_email"].(string)
+	privateKey, _ := serviceAccount["private_key"].(string)
+	tokenURI, _ := serviceAccount["token_uri"].(string)
+	if tokenURI == "" {
+		tokenURI = "https://oauth2.googleapis.com/token"
+	}
+	if clientEmail == "" || privateKey == "" {
+		return ""
+	}
+	signedJWT, err := signServiceAccountJWT(clientEmail, privateKey, tokenURI)
+	if err != nil {
+		return ""
+	}
+	accessToken, err := exchangeJWTForAccessToken(tokenURI, signedJWT)
+	if err != nil {
+		return ""
+	}
+	return accessToken
+}
+
+func signServiceAccountJWT(clientEmail, privateKey, tokenURI string) (string, error) {
+	block, _ := pem.Decode([]byte(privateKey))
+	if block == nil {
+		return "", errors.New("invalid private key pem")
+	}
+	key, err := parsePrivateKey(block.Bytes)
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().UTC().Unix()
+	claims := map[string]any{
+		"iss":   clientEmail,
+		"scope": "https://www.googleapis.com/auth/firebase.messaging",
+		"aud":   tokenURI,
+		"iat":   now,
+		"exp":   now + 3600,
+	}
+	header := map[string]any{
+		"alg": "RS256",
+		"typ": "JWT",
+	}
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		return "", err
+	}
+	claimsJSON, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	encodedHeader := base64.RawURLEncoding.EncodeToString(headerJSON)
+	encodedClaims := base64.RawURLEncoding.EncodeToString(claimsJSON)
+	signingInput := encodedHeader + "." + encodedClaims
+	digest := sha256.Sum256([]byte(signingInput))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
+	if err != nil {
+		return "", err
+	}
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(signature), nil
+}
+
+func parsePrivateKey(keyPEM []byte) (*rsa.PrivateKey, error) {
+	if parsed, err := x509.ParsePKCS1PrivateKey(keyPEM); err == nil {
+		return parsed, nil
+	}
+	parsedKey, err := x509.ParsePKCS8PrivateKey(keyPEM)
+	if err != nil {
+		return nil, err
+	}
+	privateKey, ok := parsedKey.(*rsa.PrivateKey)
+	if !ok {
+		return nil, errors.New("private key is not rsa")
+	}
+	return privateKey, nil
+}
+
+func exchangeJWTForAccessToken(tokenURI, assertion string) (string, error) {
+	values := url.Values{}
+	values.Set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
+	values.Set("assertion", assertion)
+	req, err := http.NewRequest(http.MethodPost, tokenURI, strings.NewReader(values.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", errors.New(trimResponse(string(body)))
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", err
+	}
+	accessToken, _ := parsed["access_token"].(string)
+	if accessToken == "" {
+		return "", errors.New("missing access_token")
+	}
+	return accessToken, nil
 }
 
 func joinProviderURL(baseURL string, path string) (string, error) {

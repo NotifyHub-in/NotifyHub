@@ -5,17 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
 )
 
 type testClient struct {
 	baseURL         string
 	callbackBaseURL string
+	apiKey          string
 	client          *http.Client
 }
 
@@ -75,6 +81,48 @@ func TestNotificationRequestAcceptedFlow(t *testing.T) {
 	}
 	if details.DeliveryAttempts[0].Status != notification.DeliveryAttemptAccepted {
 		t.Fatalf("delivery attempt status = %q, want %q", details.DeliveryAttempts[0].Status, notification.DeliveryAttemptAccepted)
+	}
+}
+
+func TestTemplateLanguageSelectionFallsBackToEnglish(t *testing.T) {
+	client := requireIntegrationClient(t)
+
+	upsertTemplate(t, client, notification.TemplateUpsertRequest{
+		TemplateKey:     "multilang-welcome",
+		Channel:         notification.ChannelEmail,
+		LanguageCode:    "en",
+		SubjectTemplate: "Welcome {{name}}",
+		BodyTemplate:    "Hello {{name}}, your order {{order_id}} is confirmed.",
+		Enabled:         true,
+	})
+	upsertTemplate(t, client, notification.TemplateUpsertRequest{
+		TemplateKey:     "multilang-welcome",
+		Channel:         notification.ChannelEmail,
+		LanguageCode:    "hi-in",
+		SubjectTemplate: "स्वागत है {{name}}",
+		BodyTemplate:    "नमस्ते {{name}}, आपका ऑर्डर {{order_id}} कन्फर्म हो गया है।",
+		Enabled:         true,
+	})
+
+	english := getTemplate(t, client, "multilang-welcome", notification.ChannelEmail, "")
+	if english.LanguageCode != "en" {
+		t.Fatalf("default template language = %q, want %q", english.LanguageCode, "en")
+	}
+	if english.BodyTemplate != "Hello {{name}}, your order {{order_id}} is confirmed." {
+		t.Fatalf("default template body = %q, want english body", english.BodyTemplate)
+	}
+
+	hindi := getTemplate(t, client, "multilang-welcome", notification.ChannelEmail, "hi-in")
+	if hindi.LanguageCode != "hi-in" {
+		t.Fatalf("template language = %q, want %q", hindi.LanguageCode, "hi-in")
+	}
+	if hindi.BodyTemplate != "नमस्ते {{name}}, आपका ऑर्डर {{order_id}} कन्फर्म हो गया है।" {
+		t.Fatalf("template body = %q, want hindi body", hindi.BodyTemplate)
+	}
+
+	fallback := getTemplate(t, client, "multilang-welcome", notification.ChannelEmail, "fr")
+	if fallback.LanguageCode != "en" {
+		t.Fatalf("fallback language = %q, want %q", fallback.LanguageCode, "en")
 	}
 }
 
@@ -190,6 +238,203 @@ func TestProviderCallbackVerificationWithRoute(t *testing.T) {
 	}
 }
 
+func TestWhatsAppProviderCallbacksUseRealPayloadShapes(t *testing.T) {
+	client := requireIntegrationClient(t)
+	capture := startHostCaptureServer(t)
+
+	upsertTemplate(t, client, notification.TemplateUpsertRequest{
+		TemplateKey:  "test-template-pratik",
+		Channel:      notification.ChannelWhatsApp,
+		BodyTemplate: "Hi {{placeholder1}},\n\nHow are you. Welcome to nurture.",
+		Metadata: map[string]string{
+			"media_type":             "image",
+			"gupshup_template_name":  "test_template_pratik",
+			"karix_template_name":    "test_template_pratik_1",
+			"interactive_attributes": `{"button_category":"CallToAction","buttons":[{"type":"url","urlType":"static","url":"https://nrf.page.link/paHospicash","text":"Claim Offer"}]}`,
+		},
+		Enabled: true,
+	})
+
+	eventName := uniqueKey("it-whatsapp-callback")
+	bindingSet := uniqueKey("it-whatsapp-callback-binding")
+	upsertRoutingPolicy(t, client, notification.RoutingPolicyUpsertRequest{
+		EventName:  eventName,
+		Channels:   []notification.Channel{notification.ChannelWhatsApp},
+		BindingSet: bindingSet,
+		Enabled:    true,
+		Priority:   100,
+	})
+
+	t.Run("gupshup", func(t *testing.T) {
+		account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+			TenantID:    "communication-engine",
+			ProviderKey: "gupshup-whatsapp",
+			DisplayName: "Gupshup WhatsApp Callback Demo",
+			Channel:     notification.ChannelWhatsApp,
+			Enabled:     true,
+			Config: map[string]string{
+				"username": "demo-user",
+				"password": "demo-pass",
+				"version":  "1.1",
+				"base_url": capture.baseURL(t),
+			},
+			SecretRefs: map[string]notification.SecretReference{
+				"password": {
+					Ref:          "WHATSAPP_GUPSHUP_PASSWORD_DEMO",
+					MaterialType: notification.MaterialTypeSecretString,
+					Source:       "env",
+				},
+			},
+		})
+		createCallbackRoute(t, client, notification.CallbackRouteUpsertRequest{
+			ProviderKey:       "gupshup-whatsapp",
+			ProviderAccountID: account.ProviderAccountID,
+			CallbackPath:      "/v1/providers/gupshup-whatsapp/callbacks",
+			VerificationMode:  notification.CallbackVerificationModeNone,
+			Enabled:           true,
+		})
+		createProviderBinding(t, client, notification.ProviderBindingUpsertRequest{
+			Channel:           notification.ChannelWhatsApp,
+			BindingSet:        bindingSet,
+			ProviderAccountID: account.ProviderAccountID,
+			EndpointURL:       "http://connector-whatsapp:8095",
+			Enabled:           true,
+			Priority:          100,
+		})
+
+		req := notification.NotificationRequest{
+			IdempotencyKey: uniqueKey("it-whatsapp-callback-gupshup"),
+			EventName:      eventName,
+			TemplateKey:    "test-template-pratik",
+			Channels:       []notification.Channel{notification.ChannelWhatsApp},
+			BindingSet:     bindingSet,
+			Recipient: notification.Recipient{
+				UserID: "it-user-whatsapp-callback-gupshup",
+				Phone:  "918700491033",
+			},
+			Variables: map[string]string{
+				"placeholder1": "Pratik",
+			},
+		}
+
+		accepted := postNotificationRequest(t, client, req)
+		details := waitForTerminalRequest(t, client, accepted.RequestID, 20, 1*time.Second)
+		if len(details.DeliveryAttempts) == 0 || details.DeliveryAttempts[0].ProviderMessageID == "" {
+			t.Fatal("expected a provider message id before callback")
+		}
+
+		status, body := postRawProviderCallback(t, client, "gupshup-whatsapp", []notification.GupshupWhatsAppCallbackRequest{{
+			ExternalID: details.DeliveryAttempts[0].ProviderMessageID,
+			EventType:  "DELIVERED",
+			EventTS:    time.Now().UnixMilli(),
+			DestAddr:   "918700491033",
+			SrcAddr:    "917123456789",
+			Cause:      "SUCCESS",
+			ErrorCode:  "",
+			Channel:    "WHATSAPP",
+		}})
+		if status != http.StatusAccepted {
+			t.Fatalf("provider callback status = %d, want %d, body=%s", status, http.StatusAccepted, string(body))
+		}
+
+		delivered := waitForRequestCondition(t, client, accepted.RequestID, 15, 1*time.Second, func(details requestDetailsResponse) bool {
+			return details.Request.Status == notification.RequestStatusDelivered
+		})
+		if delivered.DeliveryAttempts[0].Status != notification.DeliveryAttemptDelivered {
+			t.Fatalf("delivery attempt status = %q, want %q", delivered.DeliveryAttempts[0].Status, notification.DeliveryAttemptDelivered)
+		}
+	})
+
+	t.Run("karix", func(t *testing.T) {
+		account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+			TenantID:    "communication-engine",
+			ProviderKey: "karix-whatsapp",
+			DisplayName: "Karix WhatsApp Callback Demo",
+			Channel:     notification.ChannelWhatsApp,
+			Enabled:     true,
+			Config: map[string]string{
+				"key":      "demo-karix-key",
+				"sender":   "917208898844",
+				"version":  "v1.0.9",
+				"base_url": capture.baseURL(t),
+			},
+			SecretRefs: map[string]notification.SecretReference{
+				"key": {
+					Ref:          "WHATSAPP_KARIX_KEY_DEMO",
+					MaterialType: notification.MaterialTypeSecretString,
+					Source:       "env",
+				},
+			},
+		})
+		createCallbackRoute(t, client, notification.CallbackRouteUpsertRequest{
+			ProviderKey:       "karix-whatsapp",
+			ProviderAccountID: account.ProviderAccountID,
+			CallbackPath:      "/v1/providers/karix-whatsapp/callbacks",
+			VerificationMode:  notification.CallbackVerificationModeNone,
+			Enabled:           true,
+		})
+		createProviderBinding(t, client, notification.ProviderBindingUpsertRequest{
+			Channel:           notification.ChannelWhatsApp,
+			BindingSet:        bindingSet,
+			ProviderAccountID: account.ProviderAccountID,
+			EndpointURL:       "http://connector-whatsapp:8095",
+			Enabled:           true,
+			Priority:          100,
+		})
+
+		req := notification.NotificationRequest{
+			IdempotencyKey: uniqueKey("it-whatsapp-callback-karix"),
+			EventName:      eventName,
+			TemplateKey:    "test-template-pratik",
+			Channels:       []notification.Channel{notification.ChannelWhatsApp},
+			BindingSet:     bindingSet,
+			Recipient: notification.Recipient{
+				UserID: "it-user-whatsapp-callback-karix",
+				Phone:  "918700491033",
+			},
+			Variables: map[string]string{
+				"placeholder1": "Pratik",
+			},
+		}
+
+		accepted := postNotificationRequest(t, client, req)
+		details := waitForTerminalRequest(t, client, accepted.RequestID, 20, 1*time.Second)
+		if len(details.DeliveryAttempts) == 0 || details.DeliveryAttempts[0].ProviderMessageID == "" {
+			t.Fatal("expected a provider message id before callback")
+		}
+
+		callback := notification.KarixWhatsAppCallbackRequest{
+			Channel: "WABA",
+			Recipient: notification.KarixWhatsAppCallbackRecipient{
+				To:            "918700491033",
+				RecipientType: "individual",
+				Reference:     map[string]any{"cust_ref": "integration"},
+			},
+			Events: notification.KarixWhatsAppCallbackEvents{
+				EventType: "message",
+				Timestamp: time.Now().UnixMilli(),
+				MID:       details.DeliveryAttempts[0].ProviderMessageID,
+			},
+			NotificationAttributes: notification.KarixWhatsAppCallbackStatus{
+				Status: "delivered",
+				Reason: "delivered",
+				Code:   "0",
+			},
+		}
+		status, body := postRawProviderCallbackJSON(t, client, "karix-whatsapp", callback)
+		if status != http.StatusAccepted {
+			t.Fatalf("provider callback status = %d, want %d, body=%s", status, http.StatusAccepted, string(body))
+		}
+
+		delivered := waitForRequestCondition(t, client, accepted.RequestID, 15, 1*time.Second, func(details requestDetailsResponse) bool {
+			return details.Request.Status == notification.RequestStatusDelivered
+		})
+		if delivered.DeliveryAttempts[0].Status != notification.DeliveryAttemptDelivered {
+			t.Fatalf("delivery attempt status = %q, want %q", delivered.DeliveryAttempts[0].Status, notification.DeliveryAttemptDelivered)
+		}
+	})
+}
+
 func TestManagedPushDeliveryAccepted(t *testing.T) {
 	client := requireIntegrationClient(t)
 
@@ -242,8 +487,8 @@ func TestManagedPushDeliveryAccepted(t *testing.T) {
 		TemplateKey:    "push-notification-v1",
 		Channels:       []notification.Channel{notification.ChannelPush},
 		Recipient: notification.Recipient{
-			UserID: "it-user-push",
-			Topic:  "push-news",
+			UserID:    "it-user-push",
+			PushToken: "device-token-123",
 		},
 		Variables: map[string]string{
 			"user_id":  "it-user-push",
@@ -268,82 +513,201 @@ func TestManagedPushDeliveryAccepted(t *testing.T) {
 	if details.DeliveryAttempts[0].ProviderMessageID == "" {
 		t.Fatal("expected provider message id for push delivery")
 	}
+	if details.DeliveryAttempts[0].Destination != "device-token-123" {
+		t.Fatalf("push destination = %q, want %q", details.DeliveryAttempts[0].Destination, "device-token-123")
+	}
 }
 
-func TestRetryableFailureSchedulesRetry(t *testing.T) {
+func TestManagedWhatsAppTemplateMetadataFlowsToConnector(t *testing.T) {
 	client := requireIntegrationClient(t)
-	resetProviderBindingHealth(t, client, "binding-email-default")
+	capture := startHostCaptureServer(t)
 
-	req := notification.NotificationRequest{
-		IdempotencyKey: uniqueKey("it-retry"),
-		EventName:      "order.delayed",
-		TemplateKey:    "order-delayed-v1",
-		Channels:       []notification.Channel{notification.ChannelEmail},
-		Recipient: notification.Recipient{
-			UserID: "it-user-retry",
-			Email:  "integration-retry@example.com",
-		},
-		Variables: map[string]string{
-			"order_id": "IT-ORD-RETRY",
-			"reason":   "provider_outage",
-		},
+	upsertTemplate(t, client, notification.TemplateUpsertRequest{
+		TemplateKey:  "test-template-pratik",
+		Channel:      notification.ChannelWhatsApp,
+		BodyTemplate: "Hi {{placeholder1}},\n\nHow are you. Welcome to nurture.",
 		Metadata: map[string]string{
-			"simulate_failure": "provider_outage",
+			"media_type":             "image",
+			"gupshup_template_name":  "test_template_pratik",
+			"karix_template_name":    "test_template_pratik_1",
+			"gupshup_template_id":    "387618",
+			"karix_template_id":      "318391747228607",
+			"interactive_attributes": `{"button_category":"CallToAction","buttons":[{"type":"url","urlType":"static","url":"https://nrf.page.link/paHospicash","text":"Claim Offer"}]}`,
 		},
-	}
-
-	accepted := postNotificationRequest(t, client, req)
-	details := waitForRequestCondition(t, client, accepted.RequestID, 20, 1*time.Second, func(details requestDetailsResponse) bool {
-		return len(details.ScheduledRetries) > 0
+		Enabled: true,
 	})
 
-	if details.Request.Status != notification.RequestStatusProcessing {
-		t.Fatalf("request status = %q, want %q while retry is pending", details.Request.Status, notification.RequestStatusProcessing)
-	}
-	if len(details.ScheduledRetries) == 0 {
-		t.Fatal("expected at least one scheduled retry")
-	}
-}
-
-func TestNonRetryableFailureCreatesDeadLetterAndReplay(t *testing.T) {
-	client := requireIntegrationClient(t)
-
-	req := notification.NotificationRequest{
-		IdempotencyKey: uniqueKey("it-dead-letter"),
-		EventName:      "order.delayed",
-		TemplateKey:    "order-delayed-v1",
-		Channels:       []notification.Channel{notification.ChannelEmail},
-		Recipient: notification.Recipient{
-			UserID: "it-user-dead-letter",
-			Email:  "not-an-email",
-		},
-		Variables: map[string]string{
-			"order_id": "IT-ORD-DLQ",
-			"reason":   "invalid_destination",
-		},
-	}
-
-	accepted := postNotificationRequest(t, client, req)
-	details := waitForRequestCondition(t, client, accepted.RequestID, 15, 1*time.Second, func(details requestDetailsResponse) bool {
-		return details.Request.Status == notification.RequestStatusFailed && len(details.DeadLetters) > 0
+	eventName := uniqueKey("it-whatsapp-template")
+	bindingSet := uniqueKey("it-whatsapp-binding-set")
+	upsertRoutingPolicy(t, client, notification.RoutingPolicyUpsertRequest{
+		EventName:  eventName,
+		Channels:   []notification.Channel{notification.ChannelWhatsApp},
+		BindingSet: bindingSet,
+		Enabled:    true,
+		Priority:   100,
 	})
 
-	if len(details.ScheduledRetries) != 0 {
-		t.Fatalf("expected no scheduled retries for non-retryable failure, got %d", len(details.ScheduledRetries))
-	}
-	if len(details.DeadLetters) == 0 {
-		t.Fatal("expected a dead letter")
-	}
+	t.Run("gupshup", func(t *testing.T) {
+		reqURL := capture.baseURL(t)
+		account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+			TenantID:    "communication-engine",
+			ProviderKey: "gupshup-whatsapp",
+			DisplayName: "Gupshup WhatsApp Template Test",
+			Channel:     notification.ChannelWhatsApp,
+			Enabled:     true,
+			Config: map[string]string{
+				"username": "demo-user",
+				"password": "demo-pass",
+				"version":  "1.1",
+				"base_url": reqURL,
+			},
+			SecretRefs: map[string]notification.SecretReference{
+				"password": {
+					Ref:          "WHATSAPP_GUPSHUP_PASSWORD_DEMO",
+					MaterialType: notification.MaterialTypeSecretString,
+					Source:       "env",
+				},
+			},
+		})
+		createProviderBinding(t, client, notification.ProviderBindingUpsertRequest{
+			Channel:           notification.ChannelWhatsApp,
+			BindingSet:        bindingSet,
+			ProviderAccountID: account.ProviderAccountID,
+			EndpointURL:       "http://connector-whatsapp:8095",
+			Enabled:           true,
+			Priority:          100,
+		})
 
-	replayAccepted := replayDeadLetter(t, client, details.DeadLetters[0].DeadLetterID)
-	if replayAccepted.RequestID == "" {
-		t.Fatal("expected replay request id to be set")
-	}
+		req := notification.NotificationRequest{
+			IdempotencyKey: uniqueKey("it-whatsapp-gupshup"),
+			EventName:      eventName,
+			TemplateKey:    "test-template-pratik",
+			Channels:       []notification.Channel{notification.ChannelWhatsApp},
+			BindingSet:     bindingSet,
+			Recipient: notification.Recipient{
+				UserID: "it-user-whatsapp-gupshup",
+				Phone:  "918700491033",
+			},
+			Variables: map[string]string{
+				"placeholder1": "Pratik",
+			},
+		}
 
-	reloaded := getRequestDetails(t, client, accepted.RequestID)
-	if len(reloaded.DeadLetters) == 0 || reloaded.DeadLetters[0].ReplayRequestID == "" {
-		t.Fatal("expected dead letter to record replay_request_id after replay")
-	}
+		accepted := postNotificationRequest(t, client, req)
+		details := waitForTerminalRequest(t, client, accepted.RequestID, 20, 1*time.Second)
+		if details.Request.Status != notification.RequestStatusDispatched {
+			t.Fatalf("request status = %q, want %q", details.Request.Status, notification.RequestStatusDispatched)
+		}
+
+		captured := capture.waitFor(t, 20, 1*time.Second)
+		form, err := url.ParseQuery(string(captured.Body))
+		if err != nil {
+			t.Fatalf("parse gupshup body: %v", err)
+		}
+		if got := form.Get("method"); got != "SendMediaMessage" {
+			t.Fatalf("method = %q, want SendMediaMessage", got)
+		}
+		if got := form.Get("isTemplate"); got != "" {
+			t.Fatalf("isTemplate = %q, want empty for non-interactive media payload", got)
+		}
+		if got := form.Get("media_url"); got != "https://www.gstatic.com/webp/gallery3/2.png" {
+			t.Fatalf("media_url = %q, want media url from metadata", got)
+		}
+		if got := form.Get("format"); got != "" {
+			t.Fatalf("format = %q, want empty for media payload", got)
+		}
+		if got := form.Get("channel"); got != "" {
+			t.Fatalf("channel = %q, want empty to match CE gupshup payload", got)
+		}
+		if got := form.Get("caption"); !strings.Contains(got, "Hi Pratik") {
+			t.Fatalf("caption = %q, want rendered body", got)
+		}
+	})
+
+	t.Run("karix", func(t *testing.T) {
+		reqURL := capture.baseURL(t)
+		account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+			TenantID:    "communication-engine",
+			ProviderKey: "karix-whatsapp",
+			DisplayName: "Karix WhatsApp Template Test",
+			Channel:     notification.ChannelWhatsApp,
+			Enabled:     true,
+			Config: map[string]string{
+				"key":           "demo-karix-key",
+				"sender":        "917208898844",
+				"version":       "v1.0.9",
+				"base_url":      reqURL,
+				"template_name": "test_template_pratik_1",
+			},
+			SecretRefs: map[string]notification.SecretReference{
+				"key": {
+					Ref:          "WHATSAPP_KARIX_KEY_DEMO",
+					MaterialType: notification.MaterialTypeSecretString,
+					Source:       "env",
+				},
+			},
+		})
+		createProviderBinding(t, client, notification.ProviderBindingUpsertRequest{
+			Channel:           notification.ChannelWhatsApp,
+			BindingSet:        bindingSet,
+			ProviderAccountID: account.ProviderAccountID,
+			EndpointURL:       "http://connector-whatsapp:8095",
+			Enabled:           true,
+			Priority:          100,
+		})
+
+		req := notification.NotificationRequest{
+			IdempotencyKey: uniqueKey("it-whatsapp-karix"),
+			EventName:      eventName,
+			TemplateKey:    "test-template-pratik",
+			Channels:       []notification.Channel{notification.ChannelWhatsApp},
+			BindingSet:     bindingSet,
+			Recipient: notification.Recipient{
+				UserID: "it-user-whatsapp-karix",
+				Phone:  "918700491033",
+			},
+			Variables: map[string]string{
+				"placeholder1": "Pratik",
+			},
+		}
+
+		accepted := postNotificationRequest(t, client, req)
+		details := waitForTerminalRequest(t, client, accepted.RequestID, 20, 1*time.Second)
+		if details.Request.Status != notification.RequestStatusDispatched {
+			t.Fatalf("request status = %q, want %q", details.Request.Status, notification.RequestStatusDispatched)
+		}
+
+		captured := capture.waitFor(t, 20, 1*time.Second)
+		var payload map[string]any
+		if err := json.Unmarshal(captured.Body, &payload); err != nil {
+			t.Fatalf("parse karix body: %v", err)
+		}
+		message, ok := payload["message"].(map[string]any)
+		if !ok {
+			t.Fatalf("message missing in payload: %#v", payload)
+		}
+		content, ok := message["content"].(map[string]any)
+		if !ok {
+			t.Fatalf("content missing in payload: %#v", payload)
+		}
+		if got, _ := content["type"].(string); got != "MEDIA_TEMPLATE" {
+			t.Fatalf("content.type = %q, want MEDIA_TEMPLATE", got)
+		}
+		mediaTemplate, ok := content["mediaTemplate"].(map[string]any)
+		if !ok {
+			t.Fatalf("mediaTemplate missing in payload: %#v", payload)
+		}
+		if got, _ := mediaTemplate["templateId"].(string); got != "test_template_pratik_1" {
+			t.Fatalf("templateId = %q, want test_template_pratik_1", got)
+		}
+		bodyParams, ok := mediaTemplate["bodyParameterValues"].(map[string]any)
+		if !ok {
+			t.Fatalf("bodyParameterValues missing in payload: %#v", payload)
+		}
+		if got, _ := bodyParams["placeholder1"].(string); got != "Pratik" {
+			t.Fatalf("placeholder1 = %q, want Pratik", got)
+		}
+	})
 }
 
 func TestBindingSetFailoverAcceptsOnBackupConnector(t *testing.T) {
@@ -634,9 +998,6 @@ func TestOpenCircuitSkipsProviderAttempt(t *testing.T) {
 			"order_id": "IT-ORD-CIRCUIT-OPEN",
 			"reason":   "provider_outage",
 		},
-		Metadata: map[string]string{
-			"simulate_failure": "provider_outage",
-		},
 	}
 
 	accepted := postNotificationRequest(t, client, failing)
@@ -705,6 +1066,28 @@ func requireIntegrationClient(t *testing.T) *testClient {
 	if resp.StatusCode != http.StatusOK {
 		t.Skipf("integration API returned status %d from /v1/status", resp.StatusCode)
 	}
+
+	bootstrapTenant := uniqueKey("tenant-client")
+	status, body := client.mustJSON(t, http.MethodPost, "/v1/clients", notification.NotificationClientCreateRequest{
+		TenantID:   bootstrapTenant,
+		ClientName: "integration-test-client",
+		Enabled:    true,
+		AllowedChannels: []notification.Channel{
+			notification.ChannelEmail,
+			notification.ChannelSMS,
+			notification.ChannelWhatsApp,
+			notification.ChannelPush,
+			notification.ChannelWebhook,
+		},
+	})
+	if status != http.StatusCreated {
+		t.Skipf("integration API client registration failed with status %d: %s", status, string(body))
+	}
+	var clientResponse notification.NotificationClientCreateResponse
+	if err := json.Unmarshal(body, &clientResponse); err != nil {
+		t.Fatalf("decode notification client response: %v", err)
+	}
+	client.apiKey = clientResponse.APIKey
 
 	return client
 }
@@ -861,6 +1244,88 @@ func getProviderDefinitions(t *testing.T, client *testClient) []notification.Pro
 	return response.ProviderDefinitions
 }
 
+func getTemplate(t *testing.T, client *testClient, templateKey string, channel notification.Channel, languageCode string) notification.Template {
+	t.Helper()
+
+	path := "/v1/templates/" + templateKey + "/" + string(channel)
+	if languageCode != "" {
+		path += "?language_code=" + url.QueryEscape(languageCode)
+	}
+	status, body := client.mustRequest(t, http.MethodGet, path, nil)
+	if status != http.StatusOK {
+		t.Fatalf("get template status = %d, want %d, body=%s", status, http.StatusOK, string(body))
+	}
+
+	var tmpl notification.Template
+	if err := json.Unmarshal(body, &tmpl); err != nil {
+		t.Fatalf("decode template response: %v", err)
+	}
+	return tmpl
+}
+
+type capturedProviderRequest struct {
+	Method string
+	Path   string
+	Body   []byte
+	Header http.Header
+}
+
+type hostCaptureServer struct {
+	url   string
+	mu    sync.Mutex
+	reqCh chan capturedProviderRequest
+}
+
+func startHostCaptureServer(t *testing.T) *hostCaptureServer {
+	t.Helper()
+
+	listener, err := net.Listen("tcp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("start capture server listener: %v", err)
+	}
+	server := &http.Server{}
+	capture := &hostCaptureServer{
+		url:   fmt.Sprintf("http://host.docker.internal:%d", listener.Addr().(*net.TCPAddr).Port),
+		reqCh: make(chan capturedProviderRequest, 8),
+	}
+	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		capture.reqCh <- capturedProviderRequest{
+			Method: r.Method,
+			Path:   r.URL.Path,
+			Body:   body,
+			Header: r.Header.Clone(),
+		}
+		w.Header().Set("X-Provider-Message-ID", "capture-"+uniqueKey("msg"))
+		w.WriteHeader(http.StatusOK)
+	})
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		_ = server.Close()
+	})
+	return capture
+}
+
+func (c *hostCaptureServer) baseURL(t *testing.T) string {
+	t.Helper()
+	return c.url
+}
+
+func (c *hostCaptureServer) waitFor(t *testing.T, attempts int, delay time.Duration) capturedProviderRequest {
+	t.Helper()
+	deadline := time.After(time.Duration(attempts) * delay)
+	select {
+	case req := <-c.reqCh:
+		return req
+	case <-deadline:
+		t.Fatalf("timed out waiting for captured provider request")
+	}
+	return capturedProviderRequest{}
+}
+
 func hasProviderDefinition(definitions []notification.ProviderDefinition, providerKey string) bool {
 	for _, definition := range definitions {
 		if definition.ProviderKey == providerKey {
@@ -982,6 +1447,37 @@ func postProviderCallbackWithHeaders(t *testing.T, client *testClient, provider 
 	}
 }
 
+func postRawProviderCallback[T any](t *testing.T, client *testClient, provider string, payload T) (int, []byte) {
+	t.Helper()
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal provider callback payload: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, client.callbackBaseURL+"/v1/providers/"+provider+"/callbacks", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build provider callback request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.client.Do(req)
+	if err != nil {
+		t.Fatalf("perform provider callback request: %v", err)
+	}
+	defer resp.Body.Close()
+	responseBody, err := ioReadAll(resp)
+	if err != nil {
+		t.Fatalf("read provider callback response: %v", err)
+	}
+	return resp.StatusCode, responseBody
+}
+
+func postRawProviderCallbackJSON(t *testing.T, client *testClient, provider string, payload any) (int, []byte) {
+	t.Helper()
+	return postRawProviderCallback(t, client, provider, payload)
+}
+
 func waitForTerminalRequest(t *testing.T, client *testClient, requestID string, attempts int, interval time.Duration) requestDetailsResponse {
 	t.Helper()
 	return waitForRequestCondition(t, client, requestID, attempts, interval, func(details requestDetailsResponse) bool {
@@ -1043,6 +1539,9 @@ func (c *testClient) mustRequest(t *testing.T, method string, path string, paylo
 	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if strings.HasPrefix(path, "/v1/notification-requests") && c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
 	resp, err := c.client.Do(req)

@@ -2,24 +2,28 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
+	"strings"
 	"time"
 
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
-	"github.com/your-org/notification-control-plane/libs/core/app"
-	"github.com/your-org/notification-control-plane/libs/core/config"
-	"github.com/your-org/notification-control-plane/libs/core/httpx"
-	"github.com/your-org/notification-control-plane/libs/core/id"
-	"github.com/your-org/notification-control-plane/libs/core/render"
-	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
-	"github.com/your-org/notification-control-plane/libs/core/webhooks"
-	kafkamq "github.com/your-org/notification-control-plane/libs/messaging/kafka"
-	"github.com/your-org/notification-control-plane/libs/observability/logging"
-	"github.com/your-org/notification-control-plane/libs/observability/metrics"
-	"github.com/your-org/notification-control-plane/libs/storage/postgres"
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/app"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/httpx"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/id"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/render"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/serviceinfo"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/webhooks"
+	kafkamq "github.com/Arunshaik2001/notification-control-plane/libs/messaging/kafka"
+	"github.com/Arunshaik2001/notification-control-plane/libs/observability/logging"
+	"github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
+	"github.com/Arunshaik2001/notification-control-plane/libs/storage/postgres"
 )
 
 func main() {
@@ -39,6 +43,7 @@ func main() {
 	defer store.Close()
 	postgres.AttachMetrics(registry)
 	notifier := webhooks.NewNotifier(store)
+	authRequired := config.GetEnv("NOTIFICATION_API_AUTH_REQUIRED", "true") == "true"
 
 	brokers := config.MustGetEnv("KAFKA_BROKERS")
 	topic := config.GetEnv("KAFKA_NOTIFICATION_TOPIC", "notification.requests")
@@ -50,6 +55,108 @@ func main() {
 	defer publisher.Close()
 
 	err = app.RunHTTPService(cfg, logger, registry, func(mux *http.ServeMux, info serviceinfo.Info, registry *metrics.Registry) {
+		mux.HandleFunc("POST /v1/clients", func(w http.ResponseWriter, r *http.Request) {
+			var req notification.NotificationClientCreateRequest
+			if err := httpx.DecodeJSON(r, &req); err != nil {
+				recordAdminAPIEvent(registry, "client", "create", "invalid_payload")
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid notification client payload"})
+				return
+			}
+			if req.TenantID == "" || req.ClientName == "" {
+				recordAdminAPIEvent(registry, "client", "create", "validation_failed")
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id and client_name are required"})
+				return
+			}
+
+			apiKey, apiKeyHash := generateNotificationClientAPIKey()
+			client := notification.NotificationClient{
+				ClientID:        id.New(12),
+				TenantID:        req.TenantID,
+				ClientName:      req.ClientName,
+				Enabled:         req.Enabled,
+				AllowedChannels: req.AllowedChannels,
+			}
+			if len(client.AllowedChannels) == 0 {
+				client.AllowedChannels = []notification.Channel{
+					notification.ChannelEmail,
+					notification.ChannelSMS,
+					notification.ChannelWhatsApp,
+					notification.ChannelPush,
+					notification.ChannelWebhook,
+				}
+			}
+			created, err := store.CreateNotificationClient(r.Context(), client, apiKeyHash)
+			if errors.Is(err, postgres.ErrConflict) {
+				recordAdminAPIEvent(registry, "client", "create", "conflict")
+				httpx.WriteJSON(w, http.StatusConflict, map[string]string{"error": "notification client already exists"})
+				return
+			}
+			if err != nil {
+				logger.Error("create notification client failed", "error", err, "tenant_id", req.TenantID, "client_name", req.ClientName)
+				recordAdminAPIEvent(registry, "client", "create", "save_failed")
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "create notification client"})
+				return
+			}
+			recordAdminAPIEvent(registry, "client", "create", "accepted")
+			httpx.WriteJSON(w, http.StatusCreated, notification.NotificationClientCreateResponse{
+				Client: created,
+				APIKey: apiKey,
+			})
+		})
+
+		mux.HandleFunc("GET /v1/clients", func(w http.ResponseWriter, r *http.Request) {
+			tenantID := r.URL.Query().Get("tenant_id")
+			clients, err := store.ListNotificationClients(r.Context(), tenantID)
+			if err != nil {
+				logger.Error("list notification clients failed", "error", err, "tenant_id", tenantID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load notification clients"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"clients": clients})
+		})
+
+		mux.HandleFunc("GET /v1/clients/{clientID}", func(w http.ResponseWriter, r *http.Request) {
+			clientID := r.PathValue("clientID")
+			client, err := store.GetNotificationClient(r.Context(), clientID)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "notification client not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("get notification client failed", "error", err, "client_id", clientID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load notification client"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, client)
+		})
+
+		mux.HandleFunc("POST /v1/clients/{clientID}/disable", func(w http.ResponseWriter, r *http.Request) {
+			clientID := r.PathValue("clientID")
+			client, err := store.GetNotificationClient(r.Context(), clientID)
+			if errors.Is(err, postgres.ErrNotFound) {
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "notification client not found"})
+				return
+			}
+			if err != nil {
+				logger.Error("load notification client failed", "error", err, "client_id", clientID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load notification client"})
+				return
+			}
+			client.Enabled = false
+			if err := store.UpdateNotificationClient(r.Context(), client); err != nil {
+				logger.Error("disable notification client failed", "error", err, "client_id", clientID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "disable notification client"})
+				return
+			}
+			updated, err := store.GetNotificationClient(r.Context(), clientID)
+			if err != nil {
+				logger.Error("reload disabled notification client failed", "error", err, "client_id", clientID)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload notification client"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, updated)
+		})
+
 		mux.HandleFunc("POST /v1/notification-requests", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.NotificationRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
@@ -58,9 +165,26 @@ func main() {
 				return
 			}
 
+			caller, callerErr := authenticateNotificationRequest(r, store, authRequired)
+			if callerErr != nil {
+				registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "unauthorized"})
+				httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": callerErr.Error()})
+				return
+			}
+
 			if req.EventName == "" || req.TemplateKey == "" || req.IdempotencyKey == "" {
 				registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "validation_failed"})
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "event_name, template_key, and idempotency_key are required"})
+				return
+			}
+			if len(req.Channels) == 0 {
+				registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "validation_failed"})
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "at least one channel is required"})
+				return
+			}
+			if !clientAllowsChannels(caller, req.Channels) {
+				registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "forbidden"})
+				httpx.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "client not allowed to send one or more requested channels"})
 				return
 			}
 
@@ -71,19 +195,23 @@ func main() {
 				return
 			}
 			record := notification.NotificationRecord{
-				RequestID:      id.New(12),
-				IdempotencyKey: req.IdempotencyKey,
-				EventName:      req.EventName,
-				TemplateKey:    req.TemplateKey,
-				Channels:       req.Channels,
-				BindingSet:     req.BindingSet,
-				Recipient:      req.Recipient,
-				Variables:      req.Variables,
-				Metadata:       req.Metadata,
-				Priority:       req.Priority,
-				Status:         notification.RequestStatusAccepted,
-				RequestedAt:    now,
-				ExpiresAt:      req.ExpiresAt,
+				RequestID:        id.New(12),
+				IdempotencyKey:   req.IdempotencyKey,
+				EventName:        req.EventName,
+				TemplateKey:      req.TemplateKey,
+				LanguageCode:     notification.NormalizeLanguageCode(req.LanguageCode),
+				Channels:         req.Channels,
+				BindingSet:       req.BindingSet,
+				Recipient:        req.Recipient,
+				Variables:        req.Variables,
+				Metadata:         req.Metadata,
+				Priority:         req.Priority,
+				SourceClientID:   caller.ClientID,
+				SourceTenantID:   caller.TenantID,
+				SourceClientName: caller.ClientName,
+				Status:           notification.RequestStatusAccepted,
+				RequestedAt:      now,
+				ExpiresAt:        req.ExpiresAt,
 			}
 
 			if err := store.CreateNotificationRequest(r.Context(), record); err != nil {
@@ -96,7 +224,7 @@ func main() {
 						return
 					}
 
-					if !sameNotificationIntent(existing, req) {
+					if !sameNotificationIntent(existing, req, caller) {
 						registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "conflict"})
 						httpx.WriteJSON(w, http.StatusConflict, map[string]any{
 							"error":      "idempotency_key already used for a different notification request",
@@ -130,13 +258,14 @@ func main() {
 				return
 			}
 
-			if err := notifier.NotifyRequestUpdated(r.Context(), record.RequestID, map[string]interface{}{"source": "api"}); err != nil {
+			if err := notifier.NotifyRequestUpdated(r.Context(), record.RequestID, map[string]interface{}{"source": "api", "source_client": caller.ClientName, "source_client_id": caller.ClientID}); err != nil {
 				logger.Error("notify accepted lifecycle webhook failed", "error", err, "request_id", record.RequestID)
 			}
 
 			registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{
-				"outcome":  "accepted",
-				"priority": string(record.Priority),
+				"outcome":       "accepted",
+				"priority":      string(record.Priority),
+				"source_client": record.SourceClientName,
 			})
 			httpx.WriteJSON(w, http.StatusAccepted, notification.NotificationAccepted{
 				RequestID:  record.RequestID,
@@ -262,6 +391,7 @@ func main() {
 		mux.HandleFunc("POST /v1/provider-accounts", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.ProviderAccountUpsertRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
+				recordAdminAPIEvent(registry, "provider_account", "create", "invalid_payload")
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid provider account payload"})
 				return
 			}
@@ -276,11 +406,13 @@ func main() {
 				SecretRefs:        req.SecretRefs,
 			}
 			if err := notification.ValidateProviderAccount(account); err != nil {
+				recordAdminAPIEvent(registry, "provider_account", "create", "validation_failed")
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
 			if err := store.UpsertProviderAccount(r.Context(), account); err != nil {
 				logger.Error("upsert provider account failed", "error", err, "provider_account_id", account.ProviderAccountID)
+				recordAdminAPIEvent(registry, "provider_account", "create", "save_failed")
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save provider account"})
 				return
 			}
@@ -288,9 +420,11 @@ func main() {
 			saved, err := store.GetProviderAccount(r.Context(), account.ProviderAccountID)
 			if err != nil {
 				logger.Error("reload provider account failed", "error", err, "provider_account_id", account.ProviderAccountID)
+				recordAdminAPIEvent(registry, "provider_account", "create", "reload_failed")
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload provider account"})
 				return
 			}
+			recordAdminAPIEvent(registry, "provider_account", "create", "accepted")
 			httpx.WriteJSON(w, http.StatusCreated, saved)
 		})
 
@@ -309,6 +443,7 @@ func main() {
 
 			var req notification.ProviderAccountPatchRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
+				recordAdminAPIEvent(registry, "provider_account", "patch", "invalid_payload")
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid provider account patch payload"})
 				return
 			}
@@ -328,11 +463,13 @@ func main() {
 			}
 
 			if err := notification.ValidateProviderAccount(updated); err != nil {
+				recordAdminAPIEvent(registry, "provider_account", "patch", "validation_failed")
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
 			if err := store.UpsertProviderAccount(r.Context(), updated); err != nil {
 				logger.Error("patch provider account failed", "error", err, "provider_account_id", providerAccountID)
+				recordAdminAPIEvent(registry, "provider_account", "patch", "save_failed")
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save provider account"})
 				return
 			}
@@ -340,19 +477,23 @@ func main() {
 			saved, err := store.GetProviderAccount(r.Context(), providerAccountID)
 			if err != nil {
 				logger.Error("reload patched provider account failed", "error", err, "provider_account_id", providerAccountID)
+				recordAdminAPIEvent(registry, "provider_account", "patch", "reload_failed")
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload provider account"})
 				return
 			}
+			recordAdminAPIEvent(registry, "provider_account", "patch", "accepted")
 			httpx.WriteJSON(w, http.StatusOK, saved)
 		})
 
 		mux.HandleFunc("POST /v1/provider-accounts/{providerAccountID}/disable", func(w http.ResponseWriter, r *http.Request) {
 			providerAccountID := r.PathValue("providerAccountID")
 			if err := store.DisableProviderAccount(r.Context(), providerAccountID); errors.Is(err, postgres.ErrNotFound) {
+				recordAdminAPIEvent(registry, "provider_account", "disable", "not_found")
 				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "provider account not found"})
 				return
 			} else if err != nil {
 				logger.Error("disable provider account failed", "error", err, "provider_account_id", providerAccountID)
+				recordAdminAPIEvent(registry, "provider_account", "disable", "save_failed")
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "disable provider account"})
 				return
 			}
@@ -360,9 +501,11 @@ func main() {
 			account, err := store.GetProviderAccount(r.Context(), providerAccountID)
 			if err != nil {
 				logger.Error("reload disabled provider account failed", "error", err, "provider_account_id", providerAccountID)
+				recordAdminAPIEvent(registry, "provider_account", "disable", "reload_failed")
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload provider account"})
 				return
 			}
+			recordAdminAPIEvent(registry, "provider_account", "disable", "accepted")
 			httpx.WriteJSON(w, http.StatusOK, account)
 		})
 
@@ -394,25 +537,30 @@ func main() {
 		mux.HandleFunc("POST /v1/callback-routes", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.CallbackRouteUpsertRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
+				recordAdminAPIEvent(registry, "callback_route", "create", "invalid_payload")
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid callback route payload"})
 				return
 			}
 			if req.ProviderAccountID == "" || req.CallbackPath == "" {
+				recordAdminAPIEvent(registry, "callback_route", "create", "validation_failed")
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider_key, provider_account_id, and callback_path are required"})
 				return
 			}
 			if req.ProviderKey == "" {
+				recordAdminAPIEvent(registry, "callback_route", "create", "validation_failed")
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider_key is required"})
 				return
 			}
 
 			_, err := store.GetProviderAccount(r.Context(), req.ProviderAccountID)
 			if errors.Is(err, postgres.ErrNotFound) {
+				recordAdminAPIEvent(registry, "callback_route", "create", "provider_account_not_found")
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider_account_id not found"})
 				return
 			}
 			if err != nil {
 				logger.Error("load provider account for callback route failed", "error", err, "provider_account_id", req.ProviderAccountID)
+				recordAdminAPIEvent(registry, "callback_route", "create", "load_failed")
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider account"})
 				return
 			}
@@ -427,11 +575,13 @@ func main() {
 				Enabled:               req.Enabled,
 			}
 			if err := notification.ValidateCallbackRoute(route); err != nil {
+				recordAdminAPIEvent(registry, "callback_route", "create", "validation_failed")
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
 			if err := store.UpsertCallbackRoute(r.Context(), route); err != nil {
 				logger.Error("upsert callback route failed", "error", err, "provider_key", route.ProviderKey)
+				recordAdminAPIEvent(registry, "callback_route", "create", "save_failed")
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save callback route"})
 				return
 			}
@@ -439,9 +589,11 @@ func main() {
 			saved, err := store.GetCallbackRouteByProviderKey(r.Context(), route.ProviderKey)
 			if err != nil {
 				logger.Error("reload callback route failed", "error", err, "provider_key", route.ProviderKey)
+				recordAdminAPIEvent(registry, "callback_route", "create", "reload_failed")
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload callback route"})
 				return
 			}
+			recordAdminAPIEvent(registry, "callback_route", "create", "accepted")
 			httpx.WriteJSON(w, http.StatusCreated, saved)
 		})
 
@@ -468,36 +620,43 @@ func main() {
 		mux.HandleFunc("POST /v1/provider-bindings", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.ProviderBindingUpsertRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
+				recordAdminAPIEvent(registry, "provider_binding", "create", "invalid_payload")
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid provider binding payload"})
 				return
 			}
 			if req.Channel == "" {
+				recordAdminAPIEvent(registry, "provider_binding", "create", "validation_failed")
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "channel is required"})
 				return
 			}
-			if req.ProviderAccountID == "" && (req.ConnectorName == "" || req.EndpointURL == "") {
-				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "connector_name and endpoint_url are required for legacy bindings"})
+			if req.ProviderAccountID == "" {
+				recordAdminAPIEvent(registry, "provider_binding", "create", "validation_failed")
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider_account_id is required"})
 				return
 			}
-			if req.ProviderAccountID != "" && req.ConnectorName == "" {
+			if req.ConnectorName == "" {
 				account, err := store.GetProviderAccount(r.Context(), req.ProviderAccountID)
 				if errors.Is(err, postgres.ErrNotFound) {
+					recordAdminAPIEvent(registry, "provider_binding", "create", "provider_account_not_found")
 					httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider_account_id not found"})
 					return
 				}
 				if err != nil {
 					logger.Error("load provider account for binding failed", "error", err, "provider_account_id", req.ProviderAccountID)
+					recordAdminAPIEvent(registry, "provider_binding", "create", "load_failed")
 					httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load provider account"})
 					return
 				}
 				def, ok := notification.ProviderDefinitionByKey(account.ProviderKey)
 				if !ok {
+					recordAdminAPIEvent(registry, "provider_binding", "create", "provider_definition_missing")
 					httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider account provider_key is not registered"})
 					return
 				}
 				req.ConnectorName = def.ConnectorName
 			}
-			if req.ProviderAccountID != "" && req.EndpointURL == "" {
+			if req.EndpointURL == "" {
+				recordAdminAPIEvent(registry, "provider_binding", "create", "validation_failed")
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "endpoint_url is required for the current connector deployment"})
 				return
 			}
@@ -509,12 +668,12 @@ func main() {
 				ConnectorName:     req.ConnectorName,
 				EndpointURL:       req.EndpointURL,
 				ProviderAccountID: req.ProviderAccountID,
-				ConfigRefs:        req.ConfigRefs,
 				Enabled:           req.Enabled,
 				Priority:          req.Priority,
 			}
 			if err := store.UpsertProviderBinding(r.Context(), binding); err != nil {
 				logger.Error("upsert provider binding failed", "error", err, "channel", req.Channel)
+				recordAdminAPIEvent(registry, "provider_binding", "create", "save_failed")
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save provider binding"})
 				return
 			}
@@ -522,9 +681,11 @@ func main() {
 			saved, err := store.GetProviderBindingByChannel(r.Context(), req.Channel, req.BindingSet)
 			if err != nil {
 				logger.Error("reload provider binding failed", "error", err, "channel", req.Channel, "binding_set", req.BindingSet)
+				recordAdminAPIEvent(registry, "provider_binding", "create", "reload_failed")
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload provider binding"})
 				return
 			}
+			recordAdminAPIEvent(registry, "provider_binding", "create", "accepted")
 			httpx.WriteJSON(w, http.StatusOK, saved)
 		})
 
@@ -711,13 +872,14 @@ func main() {
 		mux.HandleFunc("GET /v1/templates/{templateKey}/{channel}", func(w http.ResponseWriter, r *http.Request) {
 			templateKey := r.PathValue("templateKey")
 			channel := notification.Channel(r.PathValue("channel"))
-			tmpl, err := store.GetTemplateByKeyAndChannel(r.Context(), templateKey, channel)
+			languageCode := notification.NormalizeLanguageCode(r.URL.Query().Get("language_code"))
+			tmpl, err := store.GetTemplateByKeyAndChannelAndLanguage(r.Context(), templateKey, channel, languageCode)
 			if errors.Is(err, postgres.ErrNotFound) {
 				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 				return
 			}
 			if err != nil {
-				logger.Error("get template failed", "error", err, "template_key", templateKey, "channel", channel)
+				logger.Error("get template failed", "error", err, "template_key", templateKey, "channel", channel, "language_code", languageCode)
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load template"})
 				return
 			}
@@ -747,8 +909,10 @@ func main() {
 				TemplateID:      id.New(12),
 				TemplateKey:     req.TemplateKey,
 				Channel:         req.Channel,
+				LanguageCode:    notification.NormalizeLanguageCode(req.LanguageCode),
 				SubjectTemplate: req.SubjectTemplate,
 				BodyTemplate:    req.BodyTemplate,
+				Metadata:        req.Metadata,
 				Enabled:         req.Enabled,
 			}
 			if err := store.UpsertTemplate(r.Context(), tmpl); err != nil {
@@ -757,9 +921,9 @@ func main() {
 				return
 			}
 
-			saved, err := store.GetTemplateByKeyAndChannel(r.Context(), req.TemplateKey, req.Channel)
+			saved, err := store.GetTemplateByKeyAndChannelAndLanguage(r.Context(), req.TemplateKey, req.Channel, tmpl.LanguageCode)
 			if err != nil {
-				logger.Error("reload template failed", "error", err, "template_key", req.TemplateKey, "channel", req.Channel)
+				logger.Error("reload template failed", "error", err, "template_key", req.TemplateKey, "channel", req.Channel, "language_code", tmpl.LanguageCode)
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload template"})
 				return
 			}
@@ -1056,15 +1220,24 @@ func main() {
 	}
 }
 
-func sameNotificationIntent(existing notification.NotificationRecord, incoming notification.NotificationRequest) bool {
+func sameNotificationIntent(existing notification.NotificationRecord, incoming notification.NotificationRequest, caller notification.NotificationClient) bool {
+	sourceMatches := true
+	if existing.SourceClientID != "" || existing.SourceTenantID != "" || existing.SourceClientName != "" {
+		sourceMatches = existing.SourceClientID == caller.ClientID &&
+			existing.SourceTenantID == caller.TenantID &&
+			existing.SourceClientName == caller.ClientName
+	}
+
 	return existing.EventName == incoming.EventName &&
 		existing.TemplateKey == incoming.TemplateKey &&
+		notification.NormalizeLanguageCode(existing.LanguageCode) == notification.NormalizeLanguageCode(incoming.LanguageCode) &&
 		reflect.DeepEqual(existing.Channels, incoming.Channels) &&
 		existing.BindingSet == incoming.BindingSet &&
 		reflect.DeepEqual(existing.Recipient, incoming.Recipient) &&
 		reflect.DeepEqual(existing.Variables, incoming.Variables) &&
 		reflect.DeepEqual(existing.Metadata, incoming.Metadata) &&
 		existing.Priority == incoming.Priority &&
+		sourceMatches &&
 		timesEqual(existing.ExpiresAt, incoming.ExpiresAt)
 }
 
@@ -1077,4 +1250,76 @@ func timesEqual(existing *time.Time, incoming *time.Time) bool {
 	default:
 		return existing.Equal(*incoming)
 	}
+}
+
+func authenticateNotificationRequest(r *http.Request, store *postgres.Store, authRequired bool) (notification.NotificationClient, error) {
+	apiKey := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(r.Header.Get("X-Notification-Api-Key"))
+	}
+	if apiKey == "" {
+		if authRequired {
+			return notification.NotificationClient{}, fmt.Errorf("missing notification client api key")
+		}
+		return notification.NotificationClient{
+			ClientID:        "anonymous",
+			TenantID:        "anonymous",
+			ClientName:      "anonymous",
+			Enabled:         true,
+			AllowedChannels: []notification.Channel{notification.ChannelEmail, notification.ChannelSMS, notification.ChannelWhatsApp, notification.ChannelPush, notification.ChannelWebhook},
+		}, nil
+	}
+
+	client, err := store.GetNotificationClientByAPIKeyHash(r.Context(), hashAPIKey(apiKey))
+	if errors.Is(err, postgres.ErrNotFound) {
+		return notification.NotificationClient{}, fmt.Errorf("invalid notification client api key")
+	}
+	if err != nil {
+		return notification.NotificationClient{}, err
+	}
+	if !client.Enabled {
+		return notification.NotificationClient{}, fmt.Errorf("notification client disabled")
+	}
+	return client, nil
+}
+
+func generateNotificationClientAPIKey() (string, string) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		panic(err)
+	}
+	apiKey := base64.RawURLEncoding.EncodeToString(raw[:])
+	return apiKey, hashAPIKey(apiKey)
+}
+
+func hashAPIKey(apiKey string) string {
+	sum := sha256.Sum256([]byte(apiKey))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func clientAllowsChannels(client notification.NotificationClient, requested []notification.Channel) bool {
+	if client.ClientID == "" || len(client.AllowedChannels) == 0 {
+		return true
+	}
+	allowed := make(map[notification.Channel]struct{}, len(client.AllowedChannels))
+	for _, channel := range client.AllowedChannels {
+		allowed[channel] = struct{}{}
+	}
+	for _, channel := range requested {
+		if _, ok := allowed[channel]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func recordAdminAPIEvent(registry *metrics.Registry, resource string, action string, outcome string) {
+	if registry == nil {
+		return
+	}
+	registry.IncCounter("admin_api_events_total", "Administrative API outcomes for clients, provider accounts, callback routes, and bindings.", map[string]string{
+		"resource": resource,
+		"action":   action,
+		"outcome":  outcome,
+	})
 }

@@ -8,18 +8,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/smtp"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
-	"github.com/your-org/notification-control-plane/libs/core/app"
-	"github.com/your-org/notification-control-plane/libs/core/config"
-	"github.com/your-org/notification-control-plane/libs/core/httpx"
-	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
-	"github.com/your-org/notification-control-plane/libs/observability/logging"
-	"github.com/your-org/notification-control-plane/libs/observability/metrics"
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/app"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/httpx"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/secrets"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/serviceinfo"
+	"github.com/Arunshaik2001/notification-control-plane/libs/observability/logging"
+	"github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
 )
 
 func main() {
@@ -36,15 +39,17 @@ func runConnector(serviceName string, port int, capabilities notification.Connec
 	}
 
 	logger := logging.New(cfg.ServiceName)
+	registry := metrics.NewRegistry(cfg.ServiceName)
 	providerClient := &http.Client{Timeout: 5 * time.Second}
 
-	err = app.RunHTTPService(cfg, logger, nil, func(mux *http.ServeMux, info serviceinfo.Info, _ *metrics.Registry) {
+	err = app.RunHTTPService(cfg, logger, registry, func(mux *http.ServeMux, info serviceinfo.Info, registry *metrics.Registry) {
 		mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, capabilities)
 		})
 		mux.HandleFunc("POST /v1/send", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.ConnectorSendRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": "unknown", "outcome": "invalid_payload"})
 				httpx.WriteJSON(w, http.StatusBadRequest, notification.ConnectorErrorResponse{
 					Error:          "invalid connector send payload",
 					Code:           "invalid_payload",
@@ -54,6 +59,7 @@ func runConnector(serviceName string, port int, capabilities notification.Connec
 			}
 			adapter, err := selectEmailAdapter(req.ProviderKey)
 			if err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "unsupported_provider"})
 				httpx.WriteJSON(w, http.StatusBadRequest, notification.ConnectorErrorResponse{
 					Error:          err.Error(),
 					Code:           "unsupported_provider",
@@ -61,7 +67,18 @@ func runConnector(serviceName string, port int, capabilities notification.Connec
 				})
 				return
 			}
+			if err := resolveEmailProviderConfig(&req); err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "provider_config_resolution_failed"})
+				httpx.WriteJSON(w, err.statusCode, notification.ConnectorErrorResponse{
+					Error:          err.message,
+					Code:           err.code,
+					Classification: err.classification,
+					Retryable:      err.retryable,
+				})
+				return
+			}
 			if err := adapter.validate(req); err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "validation_failed"})
 				httpx.WriteJSON(w, err.statusCode, notification.ConnectorErrorResponse{
 					Error:          err.message,
 					Code:           err.code,
@@ -72,6 +89,7 @@ func runConnector(serviceName string, port int, capabilities notification.Connec
 			}
 			outbound, buildErr := adapter.build(req)
 			if buildErr != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "build_failed"})
 				httpx.WriteJSON(w, buildErr.statusCode, notification.ConnectorErrorResponse{
 					Error:          buildErr.message,
 					Code:           buildErr.code,
@@ -80,8 +98,13 @@ func runConnector(serviceName string, port int, capabilities notification.Connec
 				})
 				return
 			}
+			sendStarted := time.Now()
 			providerMessageID, sendErr := adapter.send(r.Context(), providerClient, outbound)
+			outcome := "accepted"
 			if sendErr != nil {
+				outcome = "send_failed"
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": outcome, "classification": string(sendErr.classification)})
+				registry.ObserveHistogram("connector_provider_request_duration_seconds", "Outbound provider request duration in seconds.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": outcome}, metrics.DefaultLatencyBuckets(), time.Since(sendStarted).Seconds())
 				httpx.WriteJSON(w, sendErr.statusCode, notification.ConnectorErrorResponse{
 					Error:          sendErr.message,
 					Code:           sendErr.code,
@@ -90,6 +113,8 @@ func runConnector(serviceName string, port int, capabilities notification.Connec
 				})
 				return
 			}
+			registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": outcome})
+			registry.ObserveHistogram("connector_provider_request_duration_seconds", "Outbound provider request duration in seconds.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": outcome}, metrics.DefaultLatencyBuckets(), time.Since(sendStarted).Seconds())
 			logger.Info("sent email provider request", "request_id", req.RequestID, "provider", req.ProviderKey, "endpoint", outbound.URL)
 			httpx.WriteJSON(w, http.StatusAccepted, notification.ConnectorSendResponse{
 				RequestID:         req.RequestID,
@@ -121,11 +146,19 @@ type emailAdapter interface {
 
 type sendgridEmailAdapter struct{}
 
+type smtpEmailAdapter struct{}
+
 type providerOutboundRequest struct {
-	URL     string
-	Method  string
-	Headers map[string]string
-	Body    []byte
+	Transport   string
+	URL         string
+	Method      string
+	Headers     map[string]string
+	Body        []byte
+	SMTPHost    string
+	SMTPAuth    smtp.Auth
+	SMTPFrom    string
+	SMTPTo      string
+	SMTPSubject string
 }
 
 type sendgridOutboundPayload struct {
@@ -156,10 +189,26 @@ type emailAdapterError struct {
 	retryable      bool
 }
 
+func resolveEmailProviderConfig(req *notification.ConnectorSendRequest) *emailAdapterError {
+	resolved, err := secrets.ResolveConfig(req.ProviderConfig, req.ProviderSecretRefs)
+	if err != nil {
+		return &emailAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "failed to resolve provider secrets: " + err.Error(),
+			code:           "provider_secret_resolution_failed",
+			classification: notification.FailureClassMisconfigured,
+		}
+	}
+	req.ProviderConfig = resolved
+	return nil
+}
+
 func selectEmailAdapter(providerKey string) (emailAdapter, error) {
 	switch providerKey {
 	case "", "sendgrid-email":
 		return sendgridEmailAdapter{}, nil
+	case "smtp-email":
+		return smtpEmailAdapter{}, nil
 	default:
 		return nil, fmt.Errorf("unsupported email provider %q", providerKey)
 	}
@@ -180,24 +229,6 @@ func (sendgridEmailAdapter) validate(req notification.ConnectorSendRequest) *ema
 			message:        "provider rejected email credentials",
 			code:           "invalid_credentials",
 			classification: notification.FailureClassUnauthorized,
-		}
-	}
-	switch req.Metadata["simulate_failure"] {
-	case "rate_limit":
-		return &emailAdapterError{
-			statusCode:     http.StatusTooManyRequests,
-			message:        "email provider rate limited the request",
-			code:           "rate_limited",
-			classification: notification.FailureClassRateLimited,
-			retryable:      true,
-		}
-	case "provider_outage":
-		return &emailAdapterError{
-			statusCode:     http.StatusBadGateway,
-			message:        "email provider temporary outage",
-			code:           "provider_outage",
-			classification: notification.FailureClassTransient,
-			retryable:      true,
 		}
 	}
 	return nil
@@ -264,8 +295,9 @@ func (sendgridEmailAdapter) build(req notification.ConnectorSendRequest) (provid
 	}
 
 	return providerOutboundRequest{
-		URL:    endpoint,
-		Method: http.MethodPost,
+		Transport: "http",
+		URL:       endpoint,
+		Method:    http.MethodPost,
 		Headers: map[string]string{
 			"Authorization": "Bearer " + apiKey,
 			"Content-Type":  "application/json",
@@ -282,7 +314,74 @@ func (sendgridEmailAdapter) send(ctx context.Context, client *http.Client, outbo
 	return messageID, nil
 }
 
+func (smtpEmailAdapter) validate(req notification.ConnectorSendRequest) *emailAdapterError {
+	if req.Destination == "" || !strings.Contains(req.Destination, "@") {
+		return &emailAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "invalid email destination",
+			code:           "invalid_destination",
+			classification: notification.FailureClassInvalidRequest,
+		}
+	}
+	return nil
+}
+
+func (smtpEmailAdapter) build(req notification.ConnectorSendRequest) (providerOutboundRequest, *emailAdapterError) {
+	host := req.ProviderConfig["host"]
+	user := req.ProviderConfig["user"]
+	password := req.ProviderConfig["password"]
+	fromEmail := req.ProviderConfig["from_email"]
+	port := req.ProviderConfig["port"]
+	if host == "" || user == "" || password == "" {
+		return providerOutboundRequest{}, &emailAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "missing smtp provider config",
+			code:           "missing_provider_config",
+			classification: notification.FailureClassMisconfigured,
+		}
+	}
+	if fromEmail == "" {
+		fromEmail = user
+	}
+	if port == "" {
+		port = "587"
+	}
+	subject := req.Subject
+	if subject == "" {
+		subject = "Notification"
+	}
+	var body bytes.Buffer
+	body.WriteString("From: " + fromEmail + "\r\n")
+	body.WriteString("To: " + req.Destination + "\r\n")
+	body.WriteString("Subject: " + subject + "\r\n")
+	body.WriteString("MIME-Version: 1.0\r\n")
+	body.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+	body.WriteString("\r\n")
+	body.WriteString(req.Body)
+
+	return providerOutboundRequest{
+		Transport:   "smtp",
+		SMTPHost:    net.JoinHostPort(host, port),
+		SMTPAuth:    smtp.PlainAuth("", user, password, host),
+		SMTPFrom:    fromEmail,
+		SMTPTo:      req.Destination,
+		SMTPSubject: subject,
+		Body:        body.Bytes(),
+	}, nil
+}
+
+func (smtpEmailAdapter) send(ctx context.Context, client *http.Client, outbound providerOutboundRequest) (string, *emailAdapterError) {
+	messageID, err := executeProviderRequest(ctx, client, outbound, "email")
+	if err != nil {
+		return "", err
+	}
+	return messageID, nil
+}
+
 func executeProviderRequest(ctx context.Context, client *http.Client, outbound providerOutboundRequest, channelLabel string) (string, *emailAdapterError) {
+	if outbound.Transport == "smtp" {
+		return executeSMTPProviderRequest(ctx, outbound, channelLabel)
+	}
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -317,6 +416,27 @@ func executeProviderRequest(ctx context.Context, client *http.Client, outbound p
 	}
 
 	return providerMessageIDFromResponse(resp.Header, body), nil
+}
+
+func executeSMTPProviderRequest(_ context.Context, outbound providerOutboundRequest, channelLabel string) (string, *emailAdapterError) {
+	if outbound.SMTPHost == "" || outbound.SMTPFrom == "" || outbound.SMTPTo == "" {
+		return "", &emailAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "missing smtp transport details",
+			code:           "missing_provider_config",
+			classification: notification.FailureClassMisconfigured,
+		}
+	}
+	if err := smtp.SendMail(outbound.SMTPHost, outbound.SMTPAuth, outbound.SMTPFrom, []string{outbound.SMTPTo}, outbound.Body); err != nil {
+		return "", &emailAdapterError{
+			statusCode:     http.StatusBadGateway,
+			message:        channelLabel + " provider request failed: " + err.Error(),
+			code:           "provider_request_failed",
+			classification: notification.FailureClassTransient,
+			retryable:      true,
+		}
+	}
+	return providerMessageID(), nil
 }
 
 func providerErrorFromHTTPResponse(statusCode int, responseBody string, channelLabel string) *emailAdapterError {

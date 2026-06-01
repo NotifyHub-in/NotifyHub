@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
 )
 
 func TestWebhookAdapterSend(t *testing.T) {

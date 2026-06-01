@@ -11,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
-	obsmetrics "github.com/your-org/notification-control-plane/libs/observability/metrics"
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
+	obsmetrics "github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
 )
 
 var ErrNotFound = errors.New("record not found")
@@ -68,6 +68,7 @@ func (s *Store) CreateNotificationRequest(ctx context.Context, record notificati
 	defer func() {
 		observeDBOperation("create_notification_request", startedAt, err)
 	}()
+	record.LanguageCode = notification.NormalizeLanguageCode(record.LanguageCode)
 
 	recipientJSON, err := json.Marshal(record.Recipient)
 	if err != nil {
@@ -88,9 +89,9 @@ func (s *Store) CreateNotificationRequest(ctx context.Context, record notificati
 
 	const query = `
 		INSERT INTO notification_requests (
-			request_id, idempotency_key, event_name, template_key, channels, binding_set, recipient,
-			variables, metadata, priority, status, requested_at, expires_at
-		) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, $13)
+			request_id, idempotency_key, event_name, template_key, language_code, channels, binding_set, recipient,
+			variables, metadata, priority, source_client_id, source_tenant_id, source_client_name, status, requested_at, expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12, $13, $14, $15, $16, $17)
 	`
 
 	_, err = s.db.ExecContext(ctx, query,
@@ -98,12 +99,16 @@ func (s *Store) CreateNotificationRequest(ctx context.Context, record notificati
 		record.IdempotencyKey,
 		record.EventName,
 		record.TemplateKey,
+		record.LanguageCode,
 		string(channelsJSON),
 		record.BindingSet,
 		string(recipientJSON),
 		string(variablesJSON),
 		string(metadataJSON),
 		record.Priority,
+		record.SourceClientID,
+		record.SourceTenantID,
+		record.SourceClientName,
 		record.Status,
 		record.RequestedAt,
 		record.ExpiresAt,
@@ -126,8 +131,8 @@ func (s *Store) GetNotificationRequestByIdempotencyKey(ctx context.Context, idem
 	}()
 
 	const query = `
-		SELECT request_id, idempotency_key, event_name, template_key, channels, binding_set, recipient, variables,
-		       metadata, priority, status, requested_at, expires_at, created_at, updated_at
+		SELECT request_id, idempotency_key, event_name, template_key, language_code, channels, binding_set, recipient, variables,
+		       metadata, priority, source_client_id, source_tenant_id, source_client_name, status, requested_at, expires_at, created_at, updated_at
 		FROM notification_requests
 		WHERE idempotency_key = $1
 		LIMIT 1
@@ -147,12 +152,16 @@ func (s *Store) GetNotificationRequestByIdempotencyKey(ctx context.Context, idem
 		&record.IdempotencyKey,
 		&record.EventName,
 		&record.TemplateKey,
+		&record.LanguageCode,
 		&channelsJSON,
 		&record.BindingSet,
 		&recipientJSON,
 		&variablesJSON,
 		&metadataJSON,
 		&record.Priority,
+		&record.SourceClientID,
+		&record.SourceTenantID,
+		&record.SourceClientName,
 		&record.Status,
 		&record.RequestedAt,
 		&expiresAt,
@@ -196,8 +205,8 @@ func (s *Store) GetNotificationRequest(ctx context.Context, requestID string) (r
 	}()
 
 	const query = `
-		SELECT request_id, idempotency_key, event_name, template_key, channels, binding_set, recipient, variables,
-		       metadata, priority, status, requested_at, expires_at, created_at, updated_at
+		SELECT request_id, idempotency_key, event_name, template_key, language_code, channels, binding_set, recipient, variables,
+		       metadata, priority, source_client_id, source_tenant_id, source_client_name, status, requested_at, expires_at, created_at, updated_at
 		FROM notification_requests
 		WHERE request_id = $1
 	`
@@ -216,12 +225,16 @@ func (s *Store) GetNotificationRequest(ctx context.Context, requestID string) (r
 		&record.IdempotencyKey,
 		&record.EventName,
 		&record.TemplateKey,
+		&record.LanguageCode,
 		&channelsJSON,
 		&record.BindingSet,
 		&recipientJSON,
 		&variablesJSON,
 		&metadataJSON,
 		&record.Priority,
+		&record.SourceClientID,
+		&record.SourceTenantID,
+		&record.SourceClientName,
 		&record.Status,
 		&record.RequestedAt,
 		&expiresAt,
@@ -428,33 +441,26 @@ func (s *Store) GetDeliveryAttemptByProviderMessageID(ctx context.Context, provi
 }
 
 func (s *Store) UpsertProviderBinding(ctx context.Context, binding notification.ProviderBinding) error {
-	configRefsJSON, err := marshalStringMap(binding.ConfigRefs)
-	if err != nil {
-		return fmt.Errorf("marshal provider binding config refs: %w", err)
-	}
-
 	const query = `
 		INSERT INTO provider_bindings (
-			binding_id, channel, binding_set, connector_name, endpoint_url, provider_account_id, config_refs, enabled, priority
-		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+			binding_id, channel, binding_set, connector_name, endpoint_url, provider_account_id, enabled, priority
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (channel, binding_set, connector_name)
 		DO UPDATE SET
 			endpoint_url = EXCLUDED.endpoint_url,
 			provider_account_id = EXCLUDED.provider_account_id,
-			config_refs = EXCLUDED.config_refs,
 			enabled = EXCLUDED.enabled,
 			priority = EXCLUDED.priority,
 			updated_at = NOW()
 	`
 
-	_, err = s.db.ExecContext(ctx, query,
+	_, err := s.db.ExecContext(ctx, query,
 		binding.BindingID,
 		binding.Channel,
 		binding.BindingSet,
 		binding.ConnectorName,
 		binding.EndpointURL,
-		nullString(binding.ProviderAccountID),
-		string(configRefsJSON),
+		binding.ProviderAccountID,
 		binding.Enabled,
 		binding.Priority,
 	)
@@ -466,7 +472,7 @@ func (s *Store) UpsertProviderBinding(ctx context.Context, binding notification.
 
 func (s *Store) ListProviderBindings(ctx context.Context) ([]notification.ProviderBinding, error) {
 	const query = `
-		SELECT binding_id, channel, binding_set, connector_name, endpoint_url, provider_account_id, config_refs, enabled, priority, created_at, updated_at
+		SELECT binding_id, channel, binding_set, connector_name, endpoint_url, provider_account_id, enabled, priority, created_at, updated_at
 		FROM provider_bindings
 		ORDER BY priority ASC, channel ASC, binding_set ASC
 	`
@@ -479,10 +485,7 @@ func (s *Store) ListProviderBindings(ctx context.Context) ([]notification.Provid
 
 	var bindings []notification.ProviderBinding
 	for rows.Next() {
-		var (
-			binding        notification.ProviderBinding
-			configRefsJSON []byte
-		)
+		var binding notification.ProviderBinding
 		if err := rows.Scan(
 			&binding.BindingID,
 			&binding.Channel,
@@ -490,17 +493,12 @@ func (s *Store) ListProviderBindings(ctx context.Context) ([]notification.Provid
 			&binding.ConnectorName,
 			&binding.EndpointURL,
 			&binding.ProviderAccountID,
-			&configRefsJSON,
 			&binding.Enabled,
 			&binding.Priority,
 			&binding.CreatedAt,
 			&binding.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan provider binding: %w", err)
-		}
-		binding.ConfigRefs, err = unmarshalStringMap(configRefsJSON)
-		if err != nil {
-			return nil, fmt.Errorf("unmarshal provider binding config refs: %w", err)
 		}
 		bindings = append(bindings, binding)
 	}
@@ -525,10 +523,7 @@ func (s *Store) ListProviderBindingsByChannel(ctx context.Context, channel notif
 
 		var loaded []notification.ProviderBinding
 		for rows.Next() {
-			var (
-				binding        notification.ProviderBinding
-				configRefsJSON []byte
-			)
+			var binding notification.ProviderBinding
 			if err := rows.Scan(
 				&binding.BindingID,
 				&binding.Channel,
@@ -536,17 +531,12 @@ func (s *Store) ListProviderBindingsByChannel(ctx context.Context, channel notif
 				&binding.ConnectorName,
 				&binding.EndpointURL,
 				&binding.ProviderAccountID,
-				&configRefsJSON,
 				&binding.Enabled,
 				&binding.Priority,
 				&binding.CreatedAt,
 				&binding.UpdatedAt,
 			); err != nil {
 				return nil, fmt.Errorf("scan provider binding by channel: %w", err)
-			}
-			binding.ConfigRefs, err = unmarshalStringMap(configRefsJSON)
-			if err != nil {
-				return nil, fmt.Errorf("unmarshal provider binding by channel config refs: %w", err)
 			}
 			loaded = append(loaded, binding)
 		}
@@ -557,7 +547,7 @@ func (s *Store) ListProviderBindingsByChannel(ctx context.Context, channel notif
 	}
 
 	baseQuery := `
-		SELECT binding_id, channel, binding_set, connector_name, endpoint_url, provider_account_id, config_refs, enabled, priority, created_at, updated_at
+		SELECT binding_id, channel, binding_set, connector_name, endpoint_url, provider_account_id, enabled, priority, created_at, updated_at
 		FROM provider_bindings
 		WHERE channel = $1 AND enabled = TRUE
 	`
@@ -1011,24 +1001,32 @@ func (s *Store) GetPreferencePolicy(ctx context.Context, userID string, channel 
 }
 
 func (s *Store) UpsertTemplate(ctx context.Context, tmpl notification.Template) error {
+	tmpl.LanguageCode = notification.NormalizeLanguageCode(tmpl.LanguageCode)
+	metadataJSON, err := json.Marshal(tmpl.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal template metadata: %w", err)
+	}
 	const query = `
 		INSERT INTO templates (
-			template_id, template_key, channel, subject_template, body_template, enabled
-		) VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (template_key, channel)
+			template_id, template_key, channel, language_code, subject_template, body_template, metadata, enabled
+		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+		ON CONFLICT (template_key, channel, language_code)
 		DO UPDATE SET
 			subject_template = EXCLUDED.subject_template,
 			body_template = EXCLUDED.body_template,
+			metadata = EXCLUDED.metadata,
 			enabled = EXCLUDED.enabled,
 			updated_at = NOW()
 	`
 
-	_, err := s.db.ExecContext(ctx, query,
+	_, err = s.db.ExecContext(ctx, query,
 		tmpl.TemplateID,
 		tmpl.TemplateKey,
 		tmpl.Channel,
+		tmpl.LanguageCode,
 		tmpl.SubjectTemplate,
 		tmpl.BodyTemplate,
+		string(metadataJSON),
 		tmpl.Enabled,
 	)
 	if err != nil {
@@ -1039,9 +1037,9 @@ func (s *Store) UpsertTemplate(ctx context.Context, tmpl notification.Template) 
 
 func (s *Store) ListTemplates(ctx context.Context) ([]notification.Template, error) {
 	const query = `
-		SELECT template_id, template_key, channel, subject_template, body_template, enabled, created_at, updated_at
+		SELECT template_id, template_key, channel, language_code, subject_template, body_template, metadata, enabled, created_at, updated_at
 		FROM templates
-		ORDER BY template_key ASC, channel ASC
+		ORDER BY template_key ASC, channel ASC, language_code ASC
 	`
 
 	rows, err := s.db.QueryContext(ctx, query)
@@ -1053,17 +1051,25 @@ func (s *Store) ListTemplates(ctx context.Context) ([]notification.Template, err
 	var templates []notification.Template
 	for rows.Next() {
 		var tmpl notification.Template
+		var metadataJSON []byte
 		if err := rows.Scan(
 			&tmpl.TemplateID,
 			&tmpl.TemplateKey,
 			&tmpl.Channel,
+			&tmpl.LanguageCode,
 			&tmpl.SubjectTemplate,
 			&tmpl.BodyTemplate,
+			&metadataJSON,
 			&tmpl.Enabled,
 			&tmpl.CreatedAt,
 			&tmpl.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan template: %w", err)
+		}
+		if len(metadataJSON) > 0 {
+			if err := json.Unmarshal(metadataJSON, &tmpl.Metadata); err != nil {
+				return nil, fmt.Errorf("unmarshal template metadata: %w", err)
+			}
 		}
 		templates = append(templates, tmpl)
 	}
@@ -1074,24 +1080,36 @@ func (s *Store) ListTemplates(ctx context.Context) ([]notification.Template, err
 }
 
 func (s *Store) GetTemplateByKeyAndChannel(ctx context.Context, templateKey string, channel notification.Channel) (tmpl notification.Template, err error) {
+	return s.getTemplateByKeyChannelAndLanguage(ctx, templateKey, channel, notification.DefaultLanguageCode, true)
+}
+
+func (s *Store) GetTemplateByKeyAndChannelAndLanguage(ctx context.Context, templateKey string, channel notification.Channel, languageCode string) (tmpl notification.Template, err error) {
+	languageCode = notification.NormalizeLanguageCode(languageCode)
+	return s.getTemplateByKeyChannelAndLanguage(ctx, templateKey, channel, languageCode, true)
+}
+
+func (s *Store) getTemplateByKeyChannelAndLanguage(ctx context.Context, templateKey string, channel notification.Channel, languageCode string, allowFallback bool) (tmpl notification.Template, err error) {
 	startedAt := time.Now()
 	defer func() {
 		observeDBOperation("get_template_by_key_and_channel", startedAt, err)
 	}()
 
-	const query = `
-		SELECT template_id, template_key, channel, subject_template, body_template, enabled, created_at, updated_at
+	query := `
+		SELECT template_id, template_key, channel, language_code, subject_template, body_template, metadata, enabled, created_at, updated_at
 		FROM templates
-		WHERE template_key = $1 AND channel = $2 AND enabled = TRUE
+		WHERE template_key = $1 AND channel = $2 AND language_code = $3 AND enabled = TRUE
 		LIMIT 1
 	`
 
-	err = s.db.QueryRowContext(ctx, query, templateKey, channel).Scan(
+	var metadataJSON []byte
+	err = s.db.QueryRowContext(ctx, query, templateKey, channel, languageCode).Scan(
 		&tmpl.TemplateID,
 		&tmpl.TemplateKey,
 		&tmpl.Channel,
+		&tmpl.LanguageCode,
 		&tmpl.SubjectTemplate,
 		&tmpl.BodyTemplate,
+		&metadataJSON,
 		&tmpl.Enabled,
 		&tmpl.CreatedAt,
 		&tmpl.UpdatedAt,
@@ -1100,7 +1118,21 @@ func (s *Store) GetTemplateByKeyAndChannel(ctx context.Context, templateKey stri
 		return notification.Template{}, ErrNotFound
 	}
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) && allowFallback && languageCode != notification.DefaultLanguageCode {
+			return s.getTemplateByKeyChannelAndLanguage(ctx, templateKey, channel, notification.DefaultLanguageCode, false)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return notification.Template{}, ErrNotFound
+		}
 		return notification.Template{}, fmt.Errorf("query template: %w", err)
+	}
+	if len(metadataJSON) > 0 {
+		if err := json.Unmarshal(metadataJSON, &tmpl.Metadata); err != nil {
+			return notification.Template{}, fmt.Errorf("unmarshal template metadata: %w", err)
+		}
+	}
+	if tmpl.LanguageCode == "" {
+		tmpl.LanguageCode = notification.DefaultLanguageCode
 	}
 	return tmpl, nil
 }

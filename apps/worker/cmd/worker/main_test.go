@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
 	"github.com/sony/gobreaker"
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
 )
 
 func TestParsePositiveInt(t *testing.T) {
@@ -106,8 +106,8 @@ func TestClassifyConnectorFailure(t *testing.T) {
 			wantRetry: true,
 		},
 		{
-			name:      "missing provider config",
-			err:       errors.New("missing provider config env var \"EMAIL_API_KEY\" for connector connector-email"),
+			name:      "missing provider account on binding",
+			err:       errors.New("provider binding binding-123 is missing provider_account_id"),
 			wantClass: notification.FailureClassMisconfigured,
 			wantRetry: false,
 		},
@@ -139,36 +139,6 @@ func TestClassifyConnectorFailure(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestResolveProviderConfig(t *testing.T) {
-	t.Run("resolves config refs", func(t *testing.T) {
-		t.Setenv("TEST_PROVIDER_TOKEN", "secret-value")
-		config, err := resolveProviderConfig(notification.ProviderBinding{
-			ConnectorName: "connector-email",
-			ConfigRefs: map[string]string{
-				"api_key": "TEST_PROVIDER_TOKEN",
-			},
-		})
-		if err != nil {
-			t.Fatalf("resolveProviderConfig returned error: %v", err)
-		}
-		if got := config["api_key"]; got != "secret-value" {
-			t.Fatalf("resolveProviderConfig api_key = %q, want %q", got, "secret-value")
-		}
-	})
-
-	t.Run("missing env var fails", func(t *testing.T) {
-		_, err := resolveProviderConfig(notification.ProviderBinding{
-			ConnectorName: "connector-email",
-			ConfigRefs: map[string]string{
-				"api_key": "MISSING_PROVIDER_TOKEN",
-			},
-		})
-		if err == nil {
-			t.Fatal("resolveProviderConfig returned nil error for missing env var")
-		}
-	})
 }
 
 func TestShouldSkipBindingForCircuit(t *testing.T) {

@@ -335,6 +335,11 @@ paths:
           required: true
           schema:
             $ref: '#/components/schemas/Channel'
+        - name: language_code
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         '200':
           description: Template
@@ -587,6 +592,8 @@ components:
           type: string
         template_key:
           type: string
+        language_code:
+          type: string
         channels:
           type: array
           items:
@@ -736,10 +743,8 @@ components:
           type: string
         endpoint_url:
           type: string
-        config_refs:
-          type: object
-          additionalProperties:
-            type: string
+        provider_account_id:
+          type: string
         enabled:
           type: boolean
         priority:
@@ -755,15 +760,13 @@ components:
           type: string
         endpoint_url:
           type: string
-        config_refs:
-          type: object
-          additionalProperties:
-            type: string
+        provider_account_id:
+          type: string
         enabled:
           type: boolean
         priority:
           type: integer
-      required: [channel, connector_name, endpoint_url]
+      required: [channel, provider_account_id, endpoint_url]
     ProviderBindingHealth:
       type: object
       properties:
@@ -854,6 +857,8 @@ components:
           type: string
         template_key:
           type: string
+        language_code:
+          type: string
         channel:
           $ref: '#/components/schemas/Channel'
         subject_template:
@@ -866,6 +871,8 @@ components:
       type: object
       properties:
         template_key:
+          type: string
+        language_code:
           type: string
         channel:
           $ref: '#/components/schemas/Channel'

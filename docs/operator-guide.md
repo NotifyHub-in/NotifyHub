@@ -2,6 +2,8 @@
 
 This guide is for running and debugging the notification control plane as it exists today.
 
+If you want the full step-by-step onboarding flow for using the platform, start with [User And Operator Guides](/Users/Shaik/notifications/notification-control-plane/docs/guides/README.md). This operator guide stays focused on runtime operations, inspection, and troubleshooting.
+
 ## Local Stack
 
 Start the stack:
@@ -62,6 +64,29 @@ After the stack starts:
 - `worker` should report healthy and consume from Kafka
 - Grafana and Prometheus should show service targets as up
 
+## AFS-Admin Push Setup
+
+This control plane already supports push generically through the `fcm-push` provider. For the AFS-admin Firebase project, keep the setup on the same managed-provider pattern as the CE farm push integration: mount the control-plane secret directory into `connector-push`, register a file-backed provider account, and wire routing through the API.
+
+The connector should expose the secret directory at `/run/notification-secrets`, for example:
+
+```yaml
+volumes:
+  - ${NOTIFICATION_SECRETS_DIR:-/tmp/notification-control-plane-secrets}:/run/notification-secrets:ro
+```
+
+Defaults used by the AFS-admin integration:
+
+- source secret file: `/Users/Shaik/notifications/communication-engine/src/main/java/farm/nurture/communication/engine/resource/firebase_config/afs_admin_fcm_content_adminsdk.json`
+- mounted secret path in connector: `file:///run/notification-secrets/afs_admin_fcm_content_adminsdk.json`
+- provider account provider key: `fcm-push`
+- binding set: `afs-admin-push`
+- routing event: `afs.admin.alert`
+
+If your CE checkout lives somewhere else, copy the Firebase JSON into `NOTIFICATION_SECRETS_DIR` and keep the bind mount aligned with that directory.
+
+Then follow the API-based setup flow in [AFS-admin push integration](/Users/Shaik/notifications/notification-control-plane/docs/integrations/afs-admin-push.md). The device token belongs in `recipient.push_token`, not in provider configuration.
+
 Useful checks:
 
 ```bash
@@ -77,6 +102,35 @@ curl -s http://localhost:8081/metrics
 ```
 
 ## Day-To-Day Operator Tasks
+
+### Register A Sending Client
+
+Any upstream service can send notifications once it has a client API key.
+
+Create a client:
+
+```bash
+curl -s -X POST http://localhost:8080/v1/clients \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "tenant_id": "tenant-a",
+    "client_name": "billing-service",
+    "allowed_channels": ["email", "sms", "whatsapp", "push", "webhook"],
+    "enabled": true
+  }'
+```
+
+Use the returned `api_key` as:
+
+```bash
+Authorization: Bearer <api_key>
+```
+
+List clients:
+
+```bash
+curl -s http://localhost:8080/v1/clients?tenant_id=tenant-a
+```
 
 ### Inspect A Request
 

@@ -12,13 +12,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
-	"github.com/your-org/notification-control-plane/libs/core/app"
-	"github.com/your-org/notification-control-plane/libs/core/config"
-	"github.com/your-org/notification-control-plane/libs/core/httpx"
-	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
-	"github.com/your-org/notification-control-plane/libs/observability/logging"
-	"github.com/your-org/notification-control-plane/libs/observability/metrics"
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/app"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/httpx"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/secrets"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/serviceinfo"
+	"github.com/Arunshaik2001/notification-control-plane/libs/observability/logging"
+	"github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
 )
 
 func main() {
@@ -28,9 +29,10 @@ func main() {
 	}
 
 	logger := logging.New(cfg.ServiceName)
+	registry := metrics.NewRegistry(cfg.ServiceName)
 	providerClient := &http.Client{Timeout: 5 * time.Second}
 
-	err = app.RunHTTPService(cfg, logger, nil, func(mux *http.ServeMux, info serviceinfo.Info, _ *metrics.Registry) {
+	err = app.RunHTTPService(cfg, logger, registry, func(mux *http.ServeMux, info serviceinfo.Info, registry *metrics.Registry) {
 		mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, notification.ConnectorCapabilities{
 				Name:     "webhook",
@@ -40,6 +42,7 @@ func main() {
 		mux.HandleFunc("POST /v1/send", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.ConnectorSendRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": "unknown", "outcome": "invalid_payload"})
 				httpx.WriteJSON(w, http.StatusBadRequest, notification.ConnectorErrorResponse{
 					Error:          "invalid connector send payload",
 					Code:           "invalid_payload",
@@ -49,7 +52,18 @@ func main() {
 			}
 
 			adapter := webhookAdapter{}
+			if err := resolveWebhookProviderConfig(&req); err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "provider_config_resolution_failed"})
+				httpx.WriteJSON(w, err.statusCode, notification.ConnectorErrorResponse{
+					Error:          err.message,
+					Code:           err.code,
+					Classification: err.classification,
+					Retryable:      err.retryable,
+				})
+				return
+			}
 			if err := adapter.validate(req); err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "validation_failed"})
 				httpx.WriteJSON(w, err.statusCode, notification.ConnectorErrorResponse{
 					Error:          err.message,
 					Code:           err.code,
@@ -61,6 +75,7 @@ func main() {
 
 			outbound, buildErr := adapter.build(req)
 			if buildErr != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "build_failed"})
 				httpx.WriteJSON(w, buildErr.statusCode, notification.ConnectorErrorResponse{
 					Error:          buildErr.message,
 					Code:           buildErr.code,
@@ -70,8 +85,11 @@ func main() {
 				return
 			}
 
+			sendStarted := time.Now()
 			messageID, sendErr := adapter.send(r.Context(), providerClient, outbound)
 			if sendErr != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "send_failed", "classification": string(sendErr.classification)})
+				registry.ObserveHistogram("connector_provider_request_duration_seconds", "Outbound provider request duration in seconds.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "send_failed"}, metrics.DefaultLatencyBuckets(), time.Since(sendStarted).Seconds())
 				httpx.WriteJSON(w, sendErr.statusCode, notification.ConnectorErrorResponse{
 					Error:          sendErr.message,
 					Code:           sendErr.code,
@@ -80,6 +98,8 @@ func main() {
 				})
 				return
 			}
+			registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "accepted"})
+			registry.ObserveHistogram("connector_provider_request_duration_seconds", "Outbound provider request duration in seconds.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "accepted"}, metrics.DefaultLatencyBuckets(), time.Since(sendStarted).Seconds())
 
 			logger.Info("sent webhook provider request", "request_id", req.RequestID, "endpoint", outbound.URL)
 			httpx.WriteJSON(w, http.StatusAccepted, notification.ConnectorSendResponse{
@@ -129,6 +149,20 @@ type webhookOutboundPayload struct {
 	Channel   notification.Channel `json:"channel"`
 }
 
+func resolveWebhookProviderConfig(req *notification.ConnectorSendRequest) *webhookAdapterError {
+	resolved, err := secrets.ResolveConfig(req.ProviderConfig, req.ProviderSecretRefs)
+	if err != nil {
+		return &webhookAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "failed to resolve provider secrets: " + err.Error(),
+			code:           "provider_secret_resolution_failed",
+			classification: notification.FailureClassMisconfigured,
+		}
+	}
+	req.ProviderConfig = resolved
+	return nil
+}
+
 func (webhookAdapter) validate(req notification.ConnectorSendRequest) *webhookAdapterError {
 	if req.Destination == "" {
 		return &webhookAdapterError{
@@ -153,24 +187,6 @@ func (webhookAdapter) validate(req notification.ConnectorSendRequest) *webhookAd
 			message:        "provider rejected webhook credentials",
 			code:           "invalid_credentials",
 			classification: notification.FailureClassUnauthorized,
-		}
-	}
-	switch req.Metadata["simulate_failure"] {
-	case "rate_limit":
-		return &webhookAdapterError{
-			statusCode:     http.StatusTooManyRequests,
-			message:        "webhook provider rate limited the request",
-			code:           "rate_limited",
-			classification: notification.FailureClassRateLimited,
-			retryable:      true,
-		}
-	case "provider_outage":
-		return &webhookAdapterError{
-			statusCode:     http.StatusBadGateway,
-			message:        "webhook provider temporary outage",
-			code:           "provider_outage",
-			classification: notification.FailureClassTransient,
-			retryable:      true,
 		}
 	}
 	return nil

@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
 )
 
 func TestTwilioSMSAdapterSend(t *testing.T) {
@@ -106,14 +106,14 @@ func TestGupshupSMSAdapterSend(t *testing.T) {
 	if gotAuth != "gupshup-secret" {
 		t.Fatalf("apikey header = %q, want %q", gotAuth, "gupshup-secret")
 	}
-	if gotPayload.Source != "EXAMPLE" || gotPayload.Destination != "+15555550123" || gotPayload.Message != "Your code is 1234" {
+	if gotPayload.Source != "EXAMPLE" || gotPayload.Destination != "15555550123" || gotPayload.Message != "Your code is 1234" {
 		t.Fatalf("payload = %#v, want sender/destination/message", gotPayload)
 	}
 }
 
 func TestKarixSMSAdapterSend(t *testing.T) {
 	var gotAuth string
-	var gotPayload karixOutboundPayload
+	var gotPayload karixSmsRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("method = %q, want POST", r.Method)
@@ -154,7 +154,10 @@ func TestKarixSMSAdapterSend(t *testing.T) {
 	if gotAuth != "karix-secret" {
 		t.Fatalf("api-key header = %q, want %q", gotAuth, "karix-secret")
 	}
-	if gotPayload.From != "EXAMPLE" || gotPayload.To != "+15555550123" || gotPayload.Message != "Your package is out for delivery" {
-		t.Fatalf("payload = %#v, want sender/destination/message", gotPayload)
+	if gotPayload.Key != "karix-secret" || gotPayload.Ver == "" || len(gotPayload.Messages) != 1 {
+		t.Fatalf("payload = %#v, want stage karix request", gotPayload)
+	}
+	if gotPayload.Messages[0].Send != "EXAMPLE" || gotPayload.Messages[0].Dest[0] != "15555550123" || gotPayload.Messages[0].Text != "Your package is out for delivery" {
+		t.Fatalf("message payload = %#v, want sender/destination/message", gotPayload.Messages[0])
 	}
 }

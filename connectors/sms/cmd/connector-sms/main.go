@@ -14,13 +14,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
-	"github.com/your-org/notification-control-plane/libs/core/app"
-	"github.com/your-org/notification-control-plane/libs/core/config"
-	"github.com/your-org/notification-control-plane/libs/core/httpx"
-	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
-	"github.com/your-org/notification-control-plane/libs/observability/logging"
-	"github.com/your-org/notification-control-plane/libs/observability/metrics"
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/app"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/httpx"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/secrets"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/serviceinfo"
+	"github.com/Arunshaik2001/notification-control-plane/libs/observability/logging"
+	"github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
 )
 
 func main() {
@@ -30,9 +31,10 @@ func main() {
 	}
 
 	logger := logging.New(cfg.ServiceName)
+	registry := metrics.NewRegistry(cfg.ServiceName)
 	providerClient := &http.Client{Timeout: 5 * time.Second}
 
-	err = app.RunHTTPService(cfg, logger, nil, func(mux *http.ServeMux, info serviceinfo.Info, _ *metrics.Registry) {
+	err = app.RunHTTPService(cfg, logger, registry, func(mux *http.ServeMux, info serviceinfo.Info, registry *metrics.Registry) {
 		mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, notification.ConnectorCapabilities{
 				Name:     "sms",
@@ -42,6 +44,7 @@ func main() {
 		mux.HandleFunc("POST /v1/send", func(w http.ResponseWriter, r *http.Request) {
 			var req notification.ConnectorSendRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": "unknown", "outcome": "invalid_payload"})
 				httpx.WriteJSON(w, http.StatusBadRequest, notification.ConnectorErrorResponse{
 					Error:          "invalid connector send payload",
 					Code:           "invalid_payload",
@@ -51,6 +54,7 @@ func main() {
 			}
 			adapter, err := selectSMSAdapter(req.ProviderKey)
 			if err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "unsupported_provider"})
 				httpx.WriteJSON(w, http.StatusBadRequest, notification.ConnectorErrorResponse{
 					Error:          err.Error(),
 					Code:           "unsupported_provider",
@@ -58,7 +62,18 @@ func main() {
 				})
 				return
 			}
+			if err := resolveSMSProviderConfig(&req); err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "provider_config_resolution_failed"})
+				httpx.WriteJSON(w, err.statusCode, notification.ConnectorErrorResponse{
+					Error:          err.message,
+					Code:           err.code,
+					Classification: err.classification,
+					Retryable:      err.retryable,
+				})
+				return
+			}
 			if err := adapter.validate(req); err != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "validation_failed"})
 				httpx.WriteJSON(w, err.statusCode, notification.ConnectorErrorResponse{
 					Error:          err.message,
 					Code:           err.code,
@@ -69,6 +84,7 @@ func main() {
 			}
 			outbound, buildErr := adapter.build(req)
 			if buildErr != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "build_failed"})
 				httpx.WriteJSON(w, buildErr.statusCode, notification.ConnectorErrorResponse{
 					Error:          buildErr.message,
 					Code:           buildErr.code,
@@ -77,8 +93,11 @@ func main() {
 				})
 				return
 			}
+			sendStarted := time.Now()
 			providerMessageID, sendErr := adapter.send(r.Context(), providerClient, outbound)
 			if sendErr != nil {
+				registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "send_failed", "classification": string(sendErr.classification)})
+				registry.ObserveHistogram("connector_provider_request_duration_seconds", "Outbound provider request duration in seconds.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "send_failed"}, metrics.DefaultLatencyBuckets(), time.Since(sendStarted).Seconds())
 				httpx.WriteJSON(w, sendErr.statusCode, notification.ConnectorErrorResponse{
 					Error:          sendErr.message,
 					Code:           sendErr.code,
@@ -87,6 +106,8 @@ func main() {
 				})
 				return
 			}
+			registry.IncCounter("connector_send_requests_total", "Outbound connector send outcomes.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "accepted"})
+			registry.ObserveHistogram("connector_provider_request_duration_seconds", "Outbound provider request duration in seconds.", map[string]string{"connector": info.Name, "provider": req.ProviderKey, "outcome": "accepted"}, metrics.DefaultLatencyBuckets(), time.Since(sendStarted).Seconds())
 			logger.Info("sent sms provider request", "request_id", req.RequestID, "provider", req.ProviderKey, "endpoint", outbound.URL)
 			httpx.WriteJSON(w, http.StatusAccepted, notification.ConnectorSendResponse{
 				RequestID:         req.RequestID,
@@ -142,10 +163,17 @@ type gupshupOutboundPayload struct {
 	Message     string `json:"message"`
 }
 
-type karixOutboundPayload struct {
-	From    string `json:"from"`
-	To      string `json:"to"`
-	Message string `json:"message"`
+type karixSmsRequest struct {
+	Ver      string            `json:"ver"`
+	Key      string            `json:"key"`
+	Messages []karixSmsMessage `json:"messages"`
+}
+
+type karixSmsMessage struct {
+	Dest []string `json:"dest"`
+	Text string   `json:"text"`
+	Send string   `json:"send"`
+	Type string   `json:"type"`
 }
 
 type smsAdapterError struct {
@@ -154,6 +182,20 @@ type smsAdapterError struct {
 	code           string
 	classification notification.FailureClass
 	retryable      bool
+}
+
+func resolveSMSProviderConfig(req *notification.ConnectorSendRequest) *smsAdapterError {
+	resolved, err := secrets.ResolveConfig(req.ProviderConfig, req.ProviderSecretRefs)
+	if err != nil {
+		return &smsAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "failed to resolve provider secrets: " + err.Error(),
+			code:           "provider_secret_resolution_failed",
+			classification: notification.FailureClassMisconfigured,
+		}
+	}
+	req.ProviderConfig = resolved
+	return nil
 }
 
 func selectSMSAdapter(providerKey string) (smsAdapter, error) {
@@ -186,7 +228,7 @@ func (twilioSMSAdapter) validate(req notification.ConnectorSendRequest) *smsAdap
 			classification: notification.FailureClassUnauthorized,
 		}
 	}
-	return smsAdapterErrorIfSimulated(req, "sms")
+	return nil
 }
 
 func (twilioSMSAdapter) build(req notification.ConnectorSendRequest) (providerOutboundRequest, *smsAdapterError) {
@@ -234,7 +276,7 @@ func (twilioSMSAdapter) send(ctx context.Context, client *http.Client, outbound 
 }
 
 func (gupshupSMSAdapter) validate(req notification.ConnectorSendRequest) *smsAdapterError {
-	if req.Destination == "" || !strings.HasPrefix(req.Destination, "+") {
+	if strings.TrimSpace(req.Destination) == "" {
 		return &smsAdapterError{
 			statusCode:     http.StatusBadRequest,
 			message:        "invalid phone destination",
@@ -242,7 +284,7 @@ func (gupshupSMSAdapter) validate(req notification.ConnectorSendRequest) *smsAda
 			classification: notification.FailureClassInvalidRequest,
 		}
 	}
-	if token := req.ProviderConfig["api_key"]; token == "unauthorized" {
+	if token := req.ProviderConfig["api_key"]; token == "unauthorized" || req.ProviderConfig["password"] == "unauthorized" {
 		return &smsAdapterError{
 			statusCode:     http.StatusUnauthorized,
 			message:        "provider rejected sms credentials",
@@ -250,14 +292,62 @@ func (gupshupSMSAdapter) validate(req notification.ConnectorSendRequest) *smsAda
 			classification: notification.FailureClassUnauthorized,
 		}
 	}
-	return smsAdapterErrorIfSimulated(req, "sms")
+	return nil
 }
 
 func (gupshupSMSAdapter) build(req notification.ConnectorSendRequest) (providerOutboundRequest, *smsAdapterError) {
 	apiKey := req.ProviderConfig["api_key"]
 	senderID := req.ProviderConfig["sender_id"]
 	baseURL := req.ProviderConfig["base_url"]
-	if apiKey == "" || senderID == "" {
+	if apiKey != "" && senderID != "" {
+		if baseURL == "" {
+			baseURL = "https://api.gupshup.io"
+		}
+		endpoint, err := joinProviderURL(baseURL, "/sms/1/send")
+		if err != nil {
+			return providerOutboundRequest{}, &smsAdapterError{
+				statusCode:     http.StatusBadRequest,
+				message:        "invalid gupshup base_url",
+				code:           "invalid_provider_config",
+				classification: notification.FailureClassMisconfigured,
+			}
+		}
+		body, err := json.Marshal(gupshupOutboundPayload{
+			Channel:     "sms",
+			Source:      senderID,
+			Destination: normalizeSMSDestination(req.Destination),
+			Message:     req.Body,
+		})
+		if err != nil {
+			return providerOutboundRequest{}, &smsAdapterError{
+				statusCode:     http.StatusInternalServerError,
+				message:        "failed to encode gupshup payload",
+				code:           "encode_failed",
+				classification: notification.FailureClassTransient,
+			}
+		}
+		return providerOutboundRequest{
+			URL:    endpoint,
+			Method: http.MethodPost,
+			Headers: map[string]string{
+				"apikey":       apiKey,
+				"Content-Type": "application/json",
+			},
+			Body: body,
+		}, nil
+	}
+
+	username := req.ProviderConfig["username"]
+	password := req.ProviderConfig["password"]
+	senderID = req.ProviderConfig["send"]
+	if senderID == "" {
+		senderID = req.ProviderConfig["sender_id"]
+	}
+	version := req.ProviderConfig["version"]
+	if version == "" {
+		version = "1.1"
+	}
+	if username == "" || password == "" || senderID == "" {
 		return providerOutboundRequest{}, &smsAdapterError{
 			statusCode:     http.StatusBadRequest,
 			message:        "missing gupshup provider config",
@@ -266,9 +356,9 @@ func (gupshupSMSAdapter) build(req notification.ConnectorSendRequest) (providerO
 		}
 	}
 	if baseURL == "" {
-		baseURL = "https://api.gupshup.io"
+		baseURL = "https://enterprise.smsgupshup.com/GatewayAPI/rest"
 	}
-	endpoint, err := joinProviderURL(baseURL, "/sms/1/send")
+	endpoint, err := joinProviderURL(baseURL, "")
 	if err != nil {
 		return providerOutboundRequest{}, &smsAdapterError{
 			statusCode:     http.StatusBadRequest,
@@ -277,28 +367,24 @@ func (gupshupSMSAdapter) build(req notification.ConnectorSendRequest) (providerO
 			classification: notification.FailureClassMisconfigured,
 		}
 	}
-	body, err := json.Marshal(gupshupOutboundPayload{
-		Channel:     "sms",
-		Source:      senderID,
-		Destination: req.Destination,
-		Message:     req.Body,
-	})
-	if err != nil {
-		return providerOutboundRequest{}, &smsAdapterError{
-			statusCode:     http.StatusInternalServerError,
-			message:        "failed to encode gupshup payload",
-			code:           "encode_failed",
-			classification: notification.FailureClassTransient,
-		}
-	}
+	query := url.Values{}
+	query.Set("method", "sendMessage")
+	query.Set("msg", req.Body)
+	query.Set("priority", "8")
+	query.Set("v", version)
+	query.Set("userid", username)
+	query.Set("password", password)
+	query.Set("send_to", normalizeSMSDestination(req.Destination))
+	query.Set("format", "text")
+	query.Set("channel", "sms")
+	parsed, _ := url.Parse(endpoint)
+	parsed.RawQuery = query.Encode()
 	return providerOutboundRequest{
-		URL:    endpoint,
-		Method: http.MethodPost,
+		URL:    parsed.String(),
+		Method: http.MethodGet,
 		Headers: map[string]string{
-			"apikey":       apiKey,
-			"Content-Type": "application/json",
+			"Accept": "*/*",
 		},
-		Body: body,
 	}, nil
 }
 
@@ -307,7 +393,7 @@ func (gupshupSMSAdapter) send(ctx context.Context, client *http.Client, outbound
 }
 
 func (karixSMSAdapter) validate(req notification.ConnectorSendRequest) *smsAdapterError {
-	if req.Destination == "" || !strings.HasPrefix(req.Destination, "+") {
+	if strings.TrimSpace(req.Destination) == "" {
 		return &smsAdapterError{
 			statusCode:     http.StatusBadRequest,
 			message:        "invalid phone destination",
@@ -315,7 +401,7 @@ func (karixSMSAdapter) validate(req notification.ConnectorSendRequest) *smsAdapt
 			classification: notification.FailureClassInvalidRequest,
 		}
 	}
-	if token := req.ProviderConfig["api_key"]; token == "unauthorized" {
+	if token := req.ProviderConfig["api_key"]; token == "unauthorized" || req.ProviderConfig["key"] == "unauthorized" {
 		return &smsAdapterError{
 			statusCode:     http.StatusUnauthorized,
 			message:        "provider rejected sms credentials",
@@ -323,14 +409,71 @@ func (karixSMSAdapter) validate(req notification.ConnectorSendRequest) *smsAdapt
 			classification: notification.FailureClassUnauthorized,
 		}
 	}
-	return smsAdapterErrorIfSimulated(req, "sms")
+	return nil
 }
 
 func (karixSMSAdapter) build(req notification.ConnectorSendRequest) (providerOutboundRequest, *smsAdapterError) {
 	apiKey := req.ProviderConfig["api_key"]
 	senderID := req.ProviderConfig["sender_id"]
 	baseURL := req.ProviderConfig["base_url"]
-	if apiKey == "" || senderID == "" {
+	if apiKey != "" && senderID != "" {
+		if baseURL == "" {
+			baseURL = "https://api.karix.io"
+		}
+		version := req.ProviderConfig["ver"]
+		if version == "" {
+			version = "1.0"
+		}
+		endpoint, err := joinProviderURL(baseURL, "/v1/messages")
+		if err != nil {
+			return providerOutboundRequest{}, &smsAdapterError{
+				statusCode:     http.StatusBadRequest,
+				message:        "invalid karix base_url",
+				code:           "invalid_provider_config",
+				classification: notification.FailureClassMisconfigured,
+			}
+		}
+		body, err := json.Marshal(karixSmsRequest{
+			Ver: version,
+			Key: apiKey,
+			Messages: []karixSmsMessage{
+				{
+					Dest: []string{normalizeSMSDestination(req.Destination)},
+					Text: req.Body,
+					Send: senderID,
+					Type: "PM",
+				},
+			},
+		})
+		if err != nil {
+			return providerOutboundRequest{}, &smsAdapterError{
+				statusCode:     http.StatusInternalServerError,
+				message:        "failed to encode karix payload",
+				code:           "encode_failed",
+				classification: notification.FailureClassTransient,
+			}
+		}
+		return providerOutboundRequest{
+			URL:    endpoint,
+			Method: http.MethodPost,
+			Headers: map[string]string{
+				"api-key":      apiKey,
+				"Content-Type": "application/json",
+			},
+			Body: body,
+		}, nil
+	}
+
+	stageKey := req.ProviderConfig["key"]
+	stageVersion := req.ProviderConfig["ver"]
+	stageSend := req.ProviderConfig["send"]
+	if baseURL == "" {
+		baseURL = req.ProviderConfig["url"]
+	}
+	if baseURL == "" {
+		baseURL = "https://japi.instaalerts.zone/httpapi/JsonReceiver"
+	}
+	if stageKey == "" || stageVersion == "" || stageSend == "" {
 		return providerOutboundRequest{}, &smsAdapterError{
 			statusCode:     http.StatusBadRequest,
 			message:        "missing karix provider config",
@@ -338,23 +481,19 @@ func (karixSMSAdapter) build(req notification.ConnectorSendRequest) (providerOut
 			classification: notification.FailureClassMisconfigured,
 		}
 	}
-	if baseURL == "" {
-		baseURL = "https://api.karix.io"
+	payload := karixSmsRequest{
+		Ver: stageVersion,
+		Key: stageKey,
+		Messages: []karixSmsMessage{
+			{
+				Dest: []string{normalizeSMSDestination(req.Destination)},
+				Text: req.Body,
+				Send: stageSend,
+				Type: "PM",
+			},
+		},
 	}
-	endpoint, err := joinProviderURL(baseURL, "/v1/messages")
-	if err != nil {
-		return providerOutboundRequest{}, &smsAdapterError{
-			statusCode:     http.StatusBadRequest,
-			message:        "invalid karix base_url",
-			code:           "invalid_provider_config",
-			classification: notification.FailureClassMisconfigured,
-		}
-	}
-	body, err := json.Marshal(karixOutboundPayload{
-		From:    senderID,
-		To:      req.Destination,
-		Message: req.Body,
-	})
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return providerOutboundRequest{}, &smsAdapterError{
 			statusCode:     http.StatusInternalServerError,
@@ -364,11 +503,11 @@ func (karixSMSAdapter) build(req notification.ConnectorSendRequest) (providerOut
 		}
 	}
 	return providerOutboundRequest{
-		URL:    endpoint,
+		URL:    baseURL,
 		Method: http.MethodPost,
 		Headers: map[string]string{
-			"api-key":      apiKey,
 			"Content-Type": "application/json",
+			"Accept":       "*/*",
 		},
 		Body: body,
 	}, nil
@@ -376,28 +515,6 @@ func (karixSMSAdapter) build(req notification.ConnectorSendRequest) (providerOut
 
 func (karixSMSAdapter) send(ctx context.Context, client *http.Client, outbound providerOutboundRequest) (string, *smsAdapterError) {
 	return executeSMSProviderRequest(ctx, client, outbound, "sms")
-}
-
-func smsAdapterErrorIfSimulated(req notification.ConnectorSendRequest, channelLabel string) *smsAdapterError {
-	switch req.Metadata["simulate_failure"] {
-	case "rate_limit":
-		return &smsAdapterError{
-			statusCode:     http.StatusTooManyRequests,
-			message:        channelLabel + " provider rate limited the request",
-			code:           "rate_limited",
-			classification: notification.FailureClassRateLimited,
-			retryable:      true,
-		}
-	case "provider_outage":
-		return &smsAdapterError{
-			statusCode:     http.StatusBadGateway,
-			message:        channelLabel + " provider temporary outage",
-			code:           "provider_outage",
-			classification: notification.FailureClassTransient,
-			retryable:      true,
-		}
-	}
-	return nil
 }
 
 func executeSMSProviderRequest(ctx context.Context, client *http.Client, outbound providerOutboundRequest, channelLabel string) (string, *smsAdapterError) {
@@ -480,13 +597,23 @@ func providerMessageIDFromResponse(headers http.Header, body []byte) string {
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal(body, &parsed); err == nil {
-		for _, key := range []string{"message_id", "id", "messageId"} {
+		for _, key := range []string{"message_id", "id", "messageId", "ackid"} {
 			if value, ok := parsed[key].(string); ok && value != "" {
 				return value
 			}
 		}
 	}
+	text := strings.TrimSpace(string(body))
+	if idx := strings.LastIndex(text, "|"); idx >= 0 && idx < len(text)-1 {
+		return strings.TrimSpace(text[idx+1:])
+	}
 	return providerMessageID()
+}
+
+func normalizeSMSDestination(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "+")
+	return value
 }
 
 func joinProviderURL(baseURL string, path string) (string, error) {

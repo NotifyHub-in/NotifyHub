@@ -1,6 +1,9 @@
 package notification
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Channel string
 
@@ -38,26 +41,31 @@ const (
 )
 
 type Recipient struct {
-	UserID  string `json:"user_id,omitempty"`
-	Email   string `json:"email,omitempty"`
-	Phone   string `json:"phone,omitempty"`
-	Topic   string `json:"topic,omitempty"`
-	Webhook string `json:"webhook,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+	Email     string `json:"email,omitempty"`
+	Phone     string `json:"phone,omitempty"`
+	PushToken string `json:"push_token,omitempty"`
+	Topic     string `json:"topic,omitempty"`
+	Webhook   string `json:"webhook,omitempty"`
 }
 
 type NotificationRequest struct {
-	RequestID      string            `json:"request_id,omitempty"`
-	IdempotencyKey string            `json:"idempotency_key"`
-	EventName      string            `json:"event_name"`
-	TemplateKey    string            `json:"template_key"`
-	Channels       []Channel         `json:"channels"`
-	BindingSet     string            `json:"binding_set,omitempty"`
-	Recipient      Recipient         `json:"recipient"`
-	Variables      map[string]string `json:"variables,omitempty"`
-	Metadata       map[string]string `json:"metadata,omitempty"`
-	Priority       string            `json:"priority,omitempty"`
-	RequestedAt    time.Time         `json:"requested_at,omitempty"`
-	ExpiresAt      *time.Time        `json:"expires_at,omitempty"`
+	RequestID        string            `json:"request_id,omitempty"`
+	IdempotencyKey   string            `json:"idempotency_key"`
+	EventName        string            `json:"event_name"`
+	TemplateKey      string            `json:"template_key"`
+	LanguageCode     string            `json:"language_code,omitempty"`
+	Channels         []Channel         `json:"channels"`
+	BindingSet       string            `json:"binding_set,omitempty"`
+	Recipient        Recipient         `json:"recipient"`
+	Variables        map[string]string `json:"variables,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
+	Priority         string            `json:"priority,omitempty"`
+	SourceClientID   string            `json:"source_client_id,omitempty"`
+	SourceTenantID   string            `json:"source_tenant_id,omitempty"`
+	SourceClientName string            `json:"source_client_name,omitempty"`
+	RequestedAt      time.Time         `json:"requested_at,omitempty"`
+	ExpiresAt        *time.Time        `json:"expires_at,omitempty"`
 }
 
 type NotificationAccepted struct {
@@ -68,21 +76,53 @@ type NotificationAccepted struct {
 }
 
 type NotificationRecord struct {
-	RequestID      string            `json:"request_id"`
-	IdempotencyKey string            `json:"idempotency_key"`
-	EventName      string            `json:"event_name"`
-	TemplateKey    string            `json:"template_key"`
-	Channels       []Channel         `json:"channels"`
-	BindingSet     string            `json:"binding_set,omitempty"`
-	Recipient      Recipient         `json:"recipient"`
-	Variables      map[string]string `json:"variables,omitempty"`
-	Metadata       map[string]string `json:"metadata,omitempty"`
-	Priority       string            `json:"priority,omitempty"`
-	Status         RequestStatus     `json:"status"`
-	RequestedAt    time.Time         `json:"requested_at"`
-	ExpiresAt      *time.Time        `json:"expires_at,omitempty"`
-	CreatedAt      time.Time         `json:"created_at"`
-	UpdatedAt      time.Time         `json:"updated_at"`
+	RequestID        string            `json:"request_id"`
+	IdempotencyKey   string            `json:"idempotency_key"`
+	EventName        string            `json:"event_name"`
+	TemplateKey      string            `json:"template_key"`
+	LanguageCode     string            `json:"language_code,omitempty"`
+	Channels         []Channel         `json:"channels"`
+	BindingSet       string            `json:"binding_set,omitempty"`
+	Recipient        Recipient         `json:"recipient"`
+	Variables        map[string]string `json:"variables,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
+	Priority         string            `json:"priority,omitempty"`
+	SourceClientID   string            `json:"source_client_id,omitempty"`
+	SourceTenantID   string            `json:"source_tenant_id,omitempty"`
+	SourceClientName string            `json:"source_client_name,omitempty"`
+	Status           RequestStatus     `json:"status"`
+	RequestedAt      time.Time         `json:"requested_at"`
+	ExpiresAt        *time.Time        `json:"expires_at,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
+}
+
+type NotificationClient struct {
+	ClientID        string    `json:"client_id"`
+	TenantID        string    `json:"tenant_id"`
+	ClientName      string    `json:"client_name"`
+	Enabled         bool      `json:"enabled"`
+	AllowedChannels []Channel `json:"allowed_channels,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type NotificationClientCreateRequest struct {
+	TenantID        string    `json:"tenant_id"`
+	ClientName      string    `json:"client_name"`
+	AllowedChannels []Channel `json:"allowed_channels,omitempty"`
+	Enabled         bool      `json:"enabled"`
+}
+
+type NotificationClientCreateResponse struct {
+	Client NotificationClient `json:"client"`
+	APIKey string             `json:"api_key"`
+}
+
+type NotificationClientPatchRequest struct {
+	ClientName      *string    `json:"client_name,omitempty"`
+	Enabled         *bool      `json:"enabled,omitempty"`
+	AllowedChannels *[]Channel `json:"allowed_channels,omitempty"`
 }
 
 type DeliveryAttempt struct {
@@ -112,28 +152,26 @@ type RetryDirective struct {
 }
 
 type ProviderBinding struct {
-	BindingID         string            `json:"binding_id"`
-	Channel           Channel           `json:"channel"`
-	BindingSet        string            `json:"binding_set,omitempty"`
-	ConnectorName     string            `json:"connector_name"`
-	EndpointURL       string            `json:"endpoint_url,omitempty"`
-	ProviderAccountID string            `json:"provider_account_id,omitempty"`
-	ConfigRefs        map[string]string `json:"config_refs,omitempty"`
-	Enabled           bool              `json:"enabled"`
-	Priority          int               `json:"priority"`
-	CreatedAt         time.Time         `json:"created_at"`
-	UpdatedAt         time.Time         `json:"updated_at"`
+	BindingID         string    `json:"binding_id"`
+	Channel           Channel   `json:"channel"`
+	BindingSet        string    `json:"binding_set,omitempty"`
+	ConnectorName     string    `json:"connector_name"`
+	EndpointURL       string    `json:"endpoint_url,omitempty"`
+	ProviderAccountID string    `json:"provider_account_id,omitempty"`
+	Enabled           bool      `json:"enabled"`
+	Priority          int       `json:"priority"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type ProviderBindingUpsertRequest struct {
-	Channel           Channel           `json:"channel"`
-	BindingSet        string            `json:"binding_set,omitempty"`
-	ConnectorName     string            `json:"connector_name,omitempty"`
-	EndpointURL       string            `json:"endpoint_url,omitempty"`
-	ProviderAccountID string            `json:"provider_account_id,omitempty"`
-	ConfigRefs        map[string]string `json:"config_refs,omitempty"`
-	Enabled           bool              `json:"enabled"`
-	Priority          int               `json:"priority"`
+	Channel           Channel `json:"channel"`
+	BindingSet        string  `json:"binding_set,omitempty"`
+	ConnectorName     string  `json:"connector_name,omitempty"`
+	EndpointURL       string  `json:"endpoint_url,omitempty"`
+	ProviderAccountID string  `json:"provider_account_id,omitempty"`
+	Enabled           bool    `json:"enabled"`
+	Priority          int     `json:"priority"`
 }
 
 type RoutingPolicy struct {
@@ -171,22 +209,37 @@ type PreferencePolicyUpsertRequest struct {
 }
 
 type Template struct {
-	TemplateID      string    `json:"template_id"`
-	TemplateKey     string    `json:"template_key"`
-	Channel         Channel   `json:"channel"`
-	SubjectTemplate string    `json:"subject_template,omitempty"`
-	BodyTemplate    string    `json:"body_template"`
-	Enabled         bool      `json:"enabled"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	TemplateID      string            `json:"template_id"`
+	TemplateKey     string            `json:"template_key"`
+	Channel         Channel           `json:"channel"`
+	LanguageCode    string            `json:"language_code,omitempty"`
+	SubjectTemplate string            `json:"subject_template,omitempty"`
+	BodyTemplate    string            `json:"body_template"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+	Enabled         bool              `json:"enabled"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
 }
 
 type TemplateUpsertRequest struct {
-	TemplateKey     string  `json:"template_key"`
-	Channel         Channel `json:"channel"`
-	SubjectTemplate string  `json:"subject_template,omitempty"`
-	BodyTemplate    string  `json:"body_template"`
-	Enabled         bool    `json:"enabled"`
+	TemplateKey     string            `json:"template_key"`
+	Channel         Channel           `json:"channel"`
+	LanguageCode    string            `json:"language_code,omitempty"`
+	SubjectTemplate string            `json:"subject_template,omitempty"`
+	BodyTemplate    string            `json:"body_template"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+	Enabled         bool              `json:"enabled"`
+}
+
+const DefaultLanguageCode = "en"
+
+func NormalizeLanguageCode(code string) string {
+	code = strings.TrimSpace(strings.ToLower(code))
+	code = strings.ReplaceAll(code, "_", "-")
+	if code == "" {
+		return DefaultLanguageCode
+	}
+	return code
 }
 
 type DeliveryPolicy struct {
@@ -236,15 +289,18 @@ type DeadLetterNotification struct {
 }
 
 type ConnectorSendRequest struct {
-	RequestID         string            `json:"request_id"`
-	Channel           Channel           `json:"channel"`
-	ProviderKey       string            `json:"provider_key,omitempty"`
-	ProviderAccountID string            `json:"provider_account_id,omitempty"`
-	Destination       string            `json:"destination"`
-	Subject           string            `json:"subject,omitempty"`
-	Body              string            `json:"body"`
-	Metadata          map[string]string `json:"metadata,omitempty"`
-	ProviderConfig    map[string]string `json:"provider_config,omitempty"`
+	RequestID          string                     `json:"request_id"`
+	Channel            Channel                    `json:"channel"`
+	LanguageCode       string                     `json:"language_code,omitempty"`
+	ProviderKey        string                     `json:"provider_key,omitempty"`
+	ProviderAccountID  string                     `json:"provider_account_id,omitempty"`
+	Destination        string                     `json:"destination"`
+	Subject            string                     `json:"subject,omitempty"`
+	Body               string                     `json:"body"`
+	TemplateVariables  map[string]string          `json:"template_variables,omitempty"`
+	Metadata           map[string]string          `json:"metadata,omitempty"`
+	ProviderConfig     map[string]string          `json:"provider_config,omitempty"`
+	ProviderSecretRefs map[string]SecretReference `json:"provider_secret_refs,omitempty"`
 }
 
 type FailureClass string

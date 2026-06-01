@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
-	"github.com/your-org/notification-control-plane/libs/core/id"
-	"github.com/your-org/notification-control-plane/libs/storage/postgres"
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/id"
+	"github.com/Arunshaik2001/notification-control-plane/libs/storage/postgres"
 )
 
 const (

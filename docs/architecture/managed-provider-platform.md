@@ -282,6 +282,33 @@ Why it exists:
 - lets the platform validate required fields before runtime
 - keeps secrets out of notification request traffic
 
+## Model: Template
+
+Templates remain channel-scoped, but they should also be language-scoped.
+
+Example:
+
+```json
+{
+  "template_key": "login-otp-v1",
+  "channel": "sms",
+  "language_code": "hi-in",
+  "subject_template": "",
+  "body_template": "नमस्ते {{name}}, आपका OTP {{otp}} है.",
+  "metadata": {
+    "use_case": "authentication"
+  },
+  "enabled": true
+}
+```
+
+Why it exists:
+
+- lets one logical template have multiple translations
+- keeps the request model generic
+- defaults to English when `language_code` is omitted
+- lets the worker fall back to English when a translation is missing
+
 ## Model: SecretReference
 
 This should be typed, not a loose env-var name string.

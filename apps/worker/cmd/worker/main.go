@@ -10,26 +10,24 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/app"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/httpx"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/id"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/render"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/serviceinfo"
+	"github.com/Arunshaik2001/notification-control-plane/libs/core/webhooks"
+	kafkamq "github.com/Arunshaik2001/notification-control-plane/libs/messaging/kafka"
+	"github.com/Arunshaik2001/notification-control-plane/libs/observability/logging"
+	"github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
+	"github.com/Arunshaik2001/notification-control-plane/libs/storage/postgres"
 	"github.com/sony/gobreaker"
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
-	"github.com/your-org/notification-control-plane/libs/core/app"
-	"github.com/your-org/notification-control-plane/libs/core/config"
-	"github.com/your-org/notification-control-plane/libs/core/httpx"
-	"github.com/your-org/notification-control-plane/libs/core/id"
-	"github.com/your-org/notification-control-plane/libs/core/render"
-	"github.com/your-org/notification-control-plane/libs/core/secrets"
-	"github.com/your-org/notification-control-plane/libs/core/serviceinfo"
-	"github.com/your-org/notification-control-plane/libs/core/webhooks"
-	kafkamq "github.com/your-org/notification-control-plane/libs/messaging/kafka"
-	"github.com/your-org/notification-control-plane/libs/observability/logging"
-	"github.com/your-org/notification-control-plane/libs/observability/metrics"
-	"github.com/your-org/notification-control-plane/libs/storage/postgres"
 )
 
 type connectorClient struct {
@@ -444,7 +442,8 @@ func processChannelDelivery(
 		return channelResult{TerminalFailed: true}
 	}
 
-	tmpl, err := store.GetTemplateByKeyAndChannel(ctx, record.TemplateKey, channel)
+	templateLanguageCode := notification.NormalizeLanguageCode(record.LanguageCode)
+	tmpl, err := store.GetTemplateByKeyAndChannelAndLanguage(ctx, record.TemplateKey, channel, templateLanguageCode)
 	if errors.Is(err, postgres.ErrNotFound) {
 		attempt := notification.DeliveryAttempt{
 			AttemptID:     id.New(12),
@@ -537,12 +536,14 @@ func processChannelDelivery(
 	}
 	nextAttemptNumber := existingAttempts + 1
 	sendReq := notification.ConnectorSendRequest{
-		RequestID:   record.RequestID,
-		Channel:     channel,
-		Destination: destination(record, channel),
-		Subject:     subject,
-		Body:        body,
-		Metadata:    record.Metadata,
+		RequestID:         record.RequestID,
+		Channel:           channel,
+		Destination:       destination(record, channel),
+		Subject:           subject,
+		Body:              body,
+		LanguageCode:      notification.NormalizeLanguageCode(tmpl.LanguageCode),
+		TemplateVariables: record.Variables,
+		Metadata:          mergeTemplateMetadata(tmpl.Metadata, record.Metadata),
 	}
 
 	lastError := ""
@@ -575,7 +576,7 @@ func processChannelDelivery(
 		}
 		breaker := breakers.breakerFor(binding, health)
 
-		providerKey, providerConfig, err := resolveBindingProviderConfig(ctx, store, binding)
+		providerKey, providerConfig, providerSecretRefs, err := resolveBindingProviderConfig(ctx, store, binding)
 		if err != nil {
 			lastError = err.Error()
 			lastFailureClass = notification.FailureClassMisconfigured
@@ -607,6 +608,7 @@ func processChannelDelivery(
 		bindingSendReq.ProviderKey = providerKey
 		bindingSendReq.ProviderAccountID = binding.ProviderAccountID
 		bindingSendReq.ProviderConfig = providerConfig
+		bindingSendReq.ProviderSecretRefs = providerSecretRefs
 		attempt := notification.DeliveryAttempt{
 			AttemptID:     id.New(12),
 			RequestID:     record.RequestID,
@@ -721,6 +723,20 @@ func processChannelDelivery(
 	}
 	createDeadLetter(ctx, logger, registry, store, record, channel, bindingSet, lastConnector, nextAttemptNumber-1, lastError, deadLetterReason)
 	return channelResult{TerminalFailed: true}
+}
+
+func mergeTemplateMetadata(templateMetadata, requestMetadata map[string]string) map[string]string {
+	if len(templateMetadata) == 0 && len(requestMetadata) == 0 {
+		return nil
+	}
+	merged := make(map[string]string, len(templateMetadata)+len(requestMetadata))
+	for key, value := range templateMetadata {
+		merged[key] = value
+	}
+	for key, value := range requestMetadata {
+		merged[key] = value
+	}
+	return merged
 }
 
 func markExpired(
@@ -890,6 +906,8 @@ func connectorName(channel notification.Channel) string {
 		return "email"
 	case notification.ChannelSMS:
 		return "sms"
+	case notification.ChannelWhatsApp:
+		return "whatsapp"
 	case notification.ChannelPush:
 		return "push"
 	default:
@@ -899,7 +917,7 @@ func connectorName(channel notification.Channel) string {
 
 func supportedChannel(channel notification.Channel) bool {
 	switch channel {
-	case notification.ChannelWebhook, notification.ChannelEmail, notification.ChannelSMS, notification.ChannelPush:
+	case notification.ChannelWebhook, notification.ChannelEmail, notification.ChannelSMS, notification.ChannelWhatsApp, notification.ChannelPush:
 		return true
 	default:
 		return false
@@ -914,7 +932,15 @@ func destination(record notification.NotificationRecord, channel notification.Ch
 		return record.Recipient.Email
 	case notification.ChannelSMS:
 		return record.Recipient.Phone
+	case notification.ChannelWhatsApp:
+		if record.Recipient.Phone != "" {
+			return record.Recipient.Phone
+		}
+		return record.Recipient.UserID
 	case notification.ChannelPush:
+		if record.Recipient.PushToken != "" {
+			return record.Recipient.PushToken
+		}
 		if record.Recipient.Topic != "" {
 			return "/topics/" + record.Recipient.Topic
 		}
@@ -1187,62 +1213,34 @@ func isExpired(record notification.NotificationRecord, now time.Time) bool {
 	return record.ExpiresAt != nil && !record.ExpiresAt.After(now)
 }
 
-func resolveProviderConfig(binding notification.ProviderBinding) (map[string]string, error) {
-	if len(binding.ConfigRefs) == 0 {
-		return nil, nil
+func resolveBindingProviderConfig(ctx context.Context, store *postgres.Store, binding notification.ProviderBinding) (string, map[string]string, map[string]notification.SecretReference, error) {
+	if binding.ProviderAccountID == "" {
+		return "", nil, nil, fmt.Errorf("provider binding %s is missing provider_account_id", binding.BindingID)
 	}
 
-	resolved := make(map[string]string, len(binding.ConfigRefs))
-	for key, envVar := range binding.ConfigRefs {
+	account, err := store.GetProviderAccount(ctx, binding.ProviderAccountID)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("load provider account %s: %w", binding.ProviderAccountID, err)
+	}
+	if !account.Enabled {
+		return "", nil, nil, fmt.Errorf("provider account %s is disabled", binding.ProviderAccountID)
+	}
+
+	config := make(map[string]string, len(account.Config))
+	for key, value := range account.Config {
 		if key == "" {
-			return nil, fmt.Errorf("provider config ref key cannot be empty for connector %s", binding.ConnectorName)
+			return "", nil, nil, fmt.Errorf("provider account %s has an empty config key", binding.ProviderAccountID)
 		}
-		if envVar == "" {
-			return nil, fmt.Errorf("provider config ref %q has an empty env var name for connector %s", key, binding.ConnectorName)
-		}
-
-		value, ok := os.LookupEnv(envVar)
-		if !ok || value == "" {
-			return nil, fmt.Errorf("missing provider config env var %q for connector %s", envVar, binding.ConnectorName)
-		}
-		resolved[key] = value
+		config[key] = value
 	}
-
-	return resolved, nil
-}
-
-func resolveBindingProviderConfig(ctx context.Context, store *postgres.Store, binding notification.ProviderBinding) (string, map[string]string, error) {
-	if binding.ProviderAccountID != "" {
-		account, err := store.GetProviderAccount(ctx, binding.ProviderAccountID)
-		if err != nil {
-			return "", nil, fmt.Errorf("load provider account %s: %w", binding.ProviderAccountID, err)
+	secretRefs := make(map[string]notification.SecretReference, len(account.SecretRefs))
+	for key, ref := range account.SecretRefs {
+		if key == "" {
+			return "", nil, nil, fmt.Errorf("provider account %s has an empty secret ref key", binding.ProviderAccountID)
 		}
-		if !account.Enabled {
-			return "", nil, fmt.Errorf("provider account %s is disabled", binding.ProviderAccountID)
-		}
-
-		resolved := make(map[string]string, len(account.Config)+len(account.SecretRefs))
-		for key, value := range account.Config {
-			if key == "" {
-				return "", nil, fmt.Errorf("provider account %s has an empty config key", binding.ProviderAccountID)
-			}
-			resolved[key] = value
-		}
-		for key, ref := range account.SecretRefs {
-			if key == "" {
-				return "", nil, fmt.Errorf("provider account %s has an empty secret ref key", binding.ProviderAccountID)
-			}
-			value, err := secrets.Resolve(ref)
-			if err != nil {
-				return "", nil, fmt.Errorf("resolve secret ref %q for provider account %s: %w", key, binding.ProviderAccountID, err)
-			}
-			resolved[key] = value
-		}
-		return account.ProviderKey, resolved, nil
+		secretRefs[key] = ref
 	}
-
-	resolved, err := resolveProviderConfig(binding)
-	return "", resolved, err
+	return account.ProviderKey, config, secretRefs, nil
 }
 
 func newProviderBreakerManager(store *postgres.Store, logger *slog.Logger) *providerBreakerManager {
@@ -1406,9 +1404,10 @@ func classifyConnectorFailure(err error) (notification.FailureClass, bool) {
 
 	message := strings.ToLower(err.Error())
 	switch {
-	case strings.Contains(message, "missing provider config env var"),
-		strings.Contains(message, "provider config ref"),
-		strings.Contains(message, "empty env var name"):
+	case strings.Contains(message, "missing provider_account_id"),
+		strings.Contains(message, "provider account"),
+		strings.Contains(message, "provider config"),
+		strings.Contains(message, "provider secret"):
 		return notification.FailureClassMisconfigured, false
 	case strings.Contains(message, "connection refused"),
 		strings.Contains(message, "no such host"),

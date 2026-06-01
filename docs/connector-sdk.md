@@ -41,9 +41,9 @@ The worker discovers a connector through a provider binding:
 - `channel`
 - `binding_set`
 - `priority`
-- `config_refs`
+- `provider_account_id`
 
-The worker resolves `config_refs` into actual `provider_config` values at dispatch time and sends those to the connector.
+The worker sends non-secret provider config plus typed provider secret references to the connector. The connector resolves those secrets at send time.
 
 ## Expected Endpoints
 

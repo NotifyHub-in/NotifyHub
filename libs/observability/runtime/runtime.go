@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	obsmetrics "github.com/your-org/notification-control-plane/libs/observability/metrics"
+	obsmetrics "github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
 )
 
 func Register(registry *obsmetrics.Registry, startedAt time.Time) {

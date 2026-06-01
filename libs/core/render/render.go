@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"text/template"
 
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
 )
 
 const (

@@ -21,6 +21,8 @@ This directory collects the important docs for the notification control plane in
 
 ## Operating The Platform
 
+- [User And Operator Guides](/Users/Shaik/notifications/notification-control-plane/docs/guides/README.md)
+  Step-by-step onboarding and usage flow for running the platform, onboarding services, wiring providers, sending notifications, and tracking callbacks.
 - [Operator Guide](/Users/Shaik/notifications/notification-control-plane/docs/operator-guide.md)
   Local startup, runtime URLs, dead-letter replay, provider health reset, observability, and troubleshooting.
 - [Roadmap](/Users/Shaik/notifications/notification-control-plane/docs/roadmap.md)
@@ -33,7 +35,12 @@ This directory collects the important docs for the notification control plane in
 - [Example Client Integrations](/Users/Shaik/notifications/notification-control-plane/examples)
   Northbound usage examples for transactional email, OTP SMS, and operational webhook alerts.
 - [Integration Guides](/Users/Shaik/notifications/notification-control-plane/docs/integrations/README.md)
-  End-to-end service integration notes, including the communication-engine multi-channel mapping.
+  End-to-end service integration notes, including the communication-engine multi-channel mapping and the AFS-admin push integration flow.
+
+## Engineering Deep Dives
+
+- [Engineering Docs](/Users/Shaik/notifications/notification-control-plane/docs/engineering/README.md)
+  Detailed explanation of the managed-provider changes, runtime model interactions, and sequence diagrams for the current implementation.
 
 ## Architecture Decisions
 
@@ -47,6 +54,7 @@ This directory collects the important docs for the notification control plane in
 
 1. Read the [README](/Users/Shaik/notifications/notification-control-plane/README.md).
 2. Read the [Architecture](/Users/Shaik/notifications/notification-control-plane/docs/architecture/v1.md).
-3. Use the [Operator Guide](/Users/Shaik/notifications/notification-control-plane/docs/operator-guide.md) if you are running the stack.
-4. Use the [Connector Integration Guide](/Users/Shaik/notifications/notification-control-plane/docs/connector-sdk.md) if you want to add a provider.
-5. Use the [Roadmap](/Users/Shaik/notifications/notification-control-plane/docs/roadmap.md) and [Project Status](/Users/Shaik/notifications/notification-control-plane/docs/project-status.md) to understand what is next.
+3. Use the [User And Operator Guides](/Users/Shaik/notifications/notification-control-plane/docs/guides/README.md) if you are onboarding or operating the platform.
+4. Use the [Engineering Docs](/Users/Shaik/notifications/notification-control-plane/docs/engineering/README.md) if you want the implementation details and model interactions.
+5. Use the [Connector Integration Guide](/Users/Shaik/notifications/notification-control-plane/docs/connector-sdk.md) if you want to add a provider.
+6. Use the [Roadmap](/Users/Shaik/notifications/notification-control-plane/docs/roadmap.md) and [Project Status](/Users/Shaik/notifications/notification-control-plane/docs/project-status.md) to understand what is next.

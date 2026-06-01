@@ -1,4 +1,4 @@
-module github.com/your-org/notification-control-plane
+module github.com/Arunshaik2001/notification-control-plane
 
 go 1.26.0
 

@@ -148,6 +148,7 @@ services:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/notification_control_plane?sslmode=disable
       KAFKA_BROKERS: kafka:9092
       KAFKA_NOTIFICATION_TOPIC: notification.requests
+      NOTIFICATION_API_AUTH_REQUIRED: "false"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -172,10 +173,6 @@ services:
       CONNECTOR_EMAIL_URL: http://connector-email:8091
       CONNECTOR_SMS_URL: http://connector-sms:8092
       CONNECTOR_PUSH_URL: http://connector-push:8094
-      EMAIL_PROVIDER_API_KEY_DEMO: demo-email-provider-key
-      SMS_PROVIDER_AUTH_TOKEN_DEMO: demo-sms-provider-token
-      PUSH_PROVIDER_SERVICE_ACCOUNT_JSON_DEMO: '{"access_token":"demo-push-provider-token"}'
-      WEBHOOK_PROVIDER_SHARED_SECRET_DEMO: demo-webhook-shared-secret
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -187,6 +184,8 @@ services:
         condition: service_started
       connector-sms:
         condition: service_started
+      connector-whatsapp:
+        condition: service_started
       connector-push:
         condition: service_started
     ports:
@@ -196,6 +195,8 @@ services:
     build:
       context: ../..
       dockerfile: build/docker/callback-gateway.Dockerfile
+    volumes:
+      - ${NOTIFICATION_SECRETS_DIR:-/tmp/notification-control-plane-secrets}:/run/notification-secrets:ro
     environment:
       APP_ENV: local
       APP_VERSION: dev
@@ -217,10 +218,13 @@ services:
     build:
       context: ../..
       dockerfile: build/docker/connector-email.Dockerfile
+    volumes:
+      - ${NOTIFICATION_SECRETS_DIR:-/tmp/notification-control-plane-secrets}:/run/notification-secrets:ro
     environment:
       APP_ENV: local
       APP_VERSION: dev
       PORT: 8091
+      EMAIL_PROVIDER_API_KEY_DEMO: demo-email-provider-key
     ports:
       - "8091:8091"
 
@@ -228,10 +232,13 @@ services:
     build:
       context: ../..
       dockerfile: build/docker/connector-sms.Dockerfile
+    volumes:
+      - ${NOTIFICATION_SECRETS_DIR:-/tmp/notification-control-plane-secrets}:/run/notification-secrets:ro
     environment:
       APP_ENV: local
       APP_VERSION: dev
       PORT: 8092
+      SMS_PROVIDER_AUTH_TOKEN_DEMO: demo-sms-provider-token
     ports:
       - "8092:8092"
 
@@ -239,10 +246,13 @@ services:
     build:
       context: ../..
       dockerfile: build/docker/connector-webhook.Dockerfile
+    volumes:
+      - ${NOTIFICATION_SECRETS_DIR:-/tmp/notification-control-plane-secrets}:/run/notification-secrets:ro
     environment:
       APP_ENV: local
       APP_VERSION: dev
       PORT: 8093
+      WEBHOOK_PROVIDER_SHARED_SECRET_DEMO: demo-webhook-shared-secret
     ports:
       - "8093:8093"
 
@@ -250,12 +260,30 @@ services:
     build:
       context: ../..
       dockerfile: build/docker/connector-push.Dockerfile
+    volumes:
+      - ${NOTIFICATION_SECRETS_DIR:-/tmp/notification-control-plane-secrets}:/run/notification-secrets:ro
     environment:
       APP_ENV: local
       APP_VERSION: dev
       PORT: 8094
+      PUSH_PROVIDER_SERVICE_ACCOUNT_JSON_DEMO: '{"access_token":"demo-push-provider-token"}'
     ports:
       - "8094:8094"
+
+  connector-whatsapp:
+    build:
+      context: ../..
+      dockerfile: build/docker/connector-whatsapp.Dockerfile
+    volumes:
+      - ${NOTIFICATION_SECRETS_DIR:-/tmp/notification-control-plane-secrets}:/run/notification-secrets:ro
+    environment:
+      APP_ENV: local
+      APP_VERSION: dev
+      PORT: 8095
+      WHATSAPP_GUPSHUP_PASSWORD_DEMO: demo-pass
+      WHATSAPP_KARIX_KEY_DEMO: demo-karix-key
+    ports:
+      - "8095:8095"
 
 volumes:
   postgres_data:

@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/your-org/notification-control-plane/libs/contracts/notification"
+	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
 )
 
 type Resolver struct{}
@@ -16,6 +16,10 @@ func NewResolver() *Resolver {
 
 func (r *Resolver) Resolve(ref notification.SecretReference) (string, error) {
 	return Resolve(ref)
+}
+
+func (r *Resolver) ResolveConfig(config map[string]string, secretRefs map[string]notification.SecretReference) (map[string]string, error) {
+	return ResolveConfig(config, secretRefs)
 }
 
 func Resolve(ref notification.SecretReference) (string, error) {
@@ -33,6 +37,25 @@ func Resolve(ref notification.SecretReference) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported secret material type %q", ref.MaterialType)
 	}
+}
+
+func ResolveConfig(config map[string]string, secretRefs map[string]notification.SecretReference) (map[string]string, error) {
+	if len(config) == 0 && len(secretRefs) == 0 {
+		return nil, nil
+	}
+
+	resolved := make(map[string]string, len(config)+len(secretRefs))
+	for key, value := range config {
+		resolved[key] = value
+	}
+	for key, ref := range secretRefs {
+		value, err := Resolve(ref)
+		if err != nil {
+			return nil, fmt.Errorf("resolve secret ref %q: %w", key, err)
+		}
+		resolved[key] = value
+	}
+	return resolved, nil
 }
 
 func resolveSecretValue(ref notification.SecretReference) (string, error) {
