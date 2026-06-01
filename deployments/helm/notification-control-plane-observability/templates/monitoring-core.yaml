@@ -1,0 +1,248 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus
+  labels:
+    {{- include "notification-control-plane-observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus
+  labels:
+    {{- include "notification-control-plane-observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus
+  labels:
+    {{- include "notification-control-plane-observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus
+roleRef:
+  kind: Role
+  name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus-config
+  labels:
+    {{- include "notification-control-plane-observability.labels" . | nindent 4 }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: {{ .Values.prometheus.scrapeInterval | quote }}
+      evaluation_interval: {{ .Values.prometheus.evaluationInterval | quote }}
+
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    scrape_configs:
+      - job_name: notification-control-plane
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - {{ printf "%s-api.%s.svc.cluster.local:8080" .Values.appReleaseName .Values.appNamespace | quote }}
+              - {{ printf "%s-worker.%s.svc.cluster.local:8081" .Values.appReleaseName .Values.appNamespace | quote }}
+              - {{ printf "%s-callback-gateway.%s.svc.cluster.local:8082" .Values.appReleaseName .Values.appNamespace | quote }}
+              - {{ printf "%s-connector-email.%s.svc.cluster.local:8091" .Values.appReleaseName .Values.appNamespace | quote }}
+              - {{ printf "%s-connector-sms.%s.svc.cluster.local:8092" .Values.appReleaseName .Values.appNamespace | quote }}
+              - {{ printf "%s-connector-webhook.%s.svc.cluster.local:8093" .Values.appReleaseName .Values.appNamespace | quote }}
+              - {{ printf "%s-connector-push.%s.svc.cluster.local:8094" .Values.appReleaseName .Values.appNamespace | quote }}
+              - {{ printf "%s-connector-whatsapp.%s.svc.cluster.local:8095" .Values.appReleaseName .Values.appNamespace | quote }}
+              - {{ printf "%s-postgres-exporter.%s.svc.cluster.local:%d" (include "notification-control-plane-observability.fullname" .) .Values.exportersNamespace (int .Values.postgresExporter.service.port) | quote }}
+              - {{ printf "%s-kafka-exporter.%s.svc.cluster.local:%d" (include "notification-control-plane-observability.fullname" .) .Values.exportersNamespace (int .Values.kafkaExporter.service.port) | quote }}
+{{- range .Values.prometheus.extraTargets }}
+              - {{ . | quote }}
+{{- end }}
+
+      - job_name: cadvisor
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - {{ .Release.Namespace | quote }}
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            action: keep
+            regex: cadvisor
+          - source_labels: [__meta_kubernetes_pod_phase]
+            action: keep
+            regex: Running
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            regex: (.+)
+            replacement: $1:{{ .Values.cadvisor.service.port }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus-alerts
+  labels:
+    {{- include "notification-control-plane-observability.labels" . | nindent 4 }}
+data:
+  notification-control-plane-alerts.yml: |
+    groups:
+      - name: notification-control-plane-health
+        rules:
+          - alert: NotificationControlPlaneApiDown
+            expr: up{job="notification-control-plane", instance=~".*-api:8080"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: Notification Control Plane API is down
+              description: The API target has not been scrapeable for 2 minutes.
+
+          - alert: NotificationControlPlaneWorkerDown
+            expr: up{job="notification-control-plane", instance=~".*-worker:8081"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: Notification Control Plane worker is down
+              description: The worker target has not been scrapeable for 2 minutes.
+
+          - alert: NotificationControlPlaneCallbackGatewayDown
+            expr: up{job="notification-control-plane", instance=~".*-callback-gateway:8082"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: Notification Control Plane callback gateway is down
+              description: The callback gateway target has not been scrapeable for 2 minutes.
+
+          - alert: NotificationControlPlaneConnectorDown
+            expr: sum by (instance) (up{job="notification-control-plane", instance=~".*-connector-.*"}) == 0
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: One or more notification connectors are down
+              description: At least one connector target is not scrapeable.
+
+          - alert: NotificationControlPlanePostgresExporterDown
+            expr: up{job="notification-control-plane", instance=~".*-postgres-exporter:9187"} == 0
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: Postgres exporter is down
+              description: The Postgres exporter target is not scrapeable.
+
+          - alert: NotificationControlPlaneKafkaExporterDown
+            expr: up{job="notification-control-plane", instance=~".*-kafka-exporter:9308"} == 0
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: Kafka exporter is down
+              description: The Kafka exporter target is not scrapeable.
+
+          - alert: NotificationControlPlaneCadvisorDown
+            expr: up{job="notification-control-plane", instance=~".*-cadvisor:8080"} == 0
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: cAdvisor is down
+              description: The cAdvisor target is not scrapeable.
+
+          - alert: NotificationControlPlaneRequestFailures
+            expr: increase(notification_request_final_status_total{status="failed"}[15m]) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Notification request failures detected
+              description: One or more notification requests failed during the last 15 minutes.
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus
+  labels:
+    {{- include "notification-control-plane-observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  replicas: {{ .Values.prometheus.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "notification-control-plane-observability.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: prometheus
+  template:
+    metadata:
+      labels:
+        {{- include "notification-control-plane-observability.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: prometheus
+    spec:
+      serviceAccountName: {{ include "notification-control-plane-observability.fullname" . }}-prometheus
+      containers:
+        - name: prometheus
+          image: "{{ .Values.prometheus.image.repository }}:{{ .Values.prometheus.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time={{ .Values.prometheus.retention }}
+            - --web.enable-lifecycle
+          ports:
+            - name: http
+              containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: rules
+              mountPath: /etc/prometheus/rules
+            - name: data
+              mountPath: /prometheus
+          resources:
+            {{- toYaml .Values.prometheus.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus-config
+        - name: rules
+          configMap:
+            name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus-alerts
+        - name: data
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus
+  labels:
+    {{- include "notification-control-plane-observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "notification-control-plane-observability.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http

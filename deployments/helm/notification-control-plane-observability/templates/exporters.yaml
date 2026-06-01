@@ -1,0 +1,119 @@
+{{- if and (not .Values.postgresExporter.existingSecret) (not .Values.postgresExporter.dataSourceName) }}
+{{- fail "postgresExporter.existingSecret or postgresExporter.dataSourceName is required" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "notification-control-plane-observability.fullname" . }}-postgres-exporter
+  namespace: {{ .Values.exportersNamespace }}
+  labels:
+    {{- include "notification-control-plane-observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-exporter
+spec:
+  replicas: {{ .Values.postgresExporter.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "notification-control-plane-observability.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres-exporter
+  template:
+    metadata:
+      labels:
+        {{- include "notification-control-plane-observability.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres-exporter
+    spec:
+      containers:
+        - name: postgres-exporter
+          image: "{{ .Values.postgresExporter.image.repository }}:{{ .Values.postgresExporter.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: {{ .Values.postgresExporter.service.port }}
+          env:
+            {{- if .Values.postgresExporter.existingSecret }}
+            - name: DATA_SOURCE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresExporter.existingSecret }}
+                  key: {{ .Values.postgresExporter.existingSecretKey }}
+            {{- else if .Values.postgresExporter.dataSourceName }}
+            - name: DATA_SOURCE_NAME
+              value: {{ .Values.postgresExporter.dataSourceName | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.postgresExporter.resources | nindent 12 }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "notification-control-plane-observability.fullname" . }}-postgres-exporter
+  namespace: {{ .Values.exportersNamespace }}
+  labels:
+    {{- include "notification-control-plane-observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-exporter
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "notification-control-plane-observability.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-exporter
+  ports:
+    - name: http
+      port: {{ .Values.postgresExporter.service.port }}
+      targetPort: http
+
+---
+{{- if not .Values.kafkaExporter.brokersCSV }}
+{{- fail "kafkaExporter.brokersCSV is required" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "notification-control-plane-observability.fullname" . }}-kafka-exporter
+  namespace: {{ .Values.exportersNamespace }}
+  labels:
+    {{- include "notification-control-plane-observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafka-exporter
+spec:
+  replicas: {{ .Values.kafkaExporter.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "notification-control-plane-observability.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: kafka-exporter
+  template:
+    metadata:
+      labels:
+        {{- include "notification-control-plane-observability.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: kafka-exporter
+    spec:
+      containers:
+        - name: kafka-exporter
+          image: "{{ .Values.kafkaExporter.image.repository }}:{{ .Values.kafkaExporter.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - --kafka.server={{ .Values.kafkaExporter.brokersCSV }}
+            - --group.filter={{ .Values.kafkaExporter.groupFilter }}
+            - --topic.filter={{ .Values.kafkaExporter.topicFilter }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.kafkaExporter.service.port }}
+          resources:
+            {{- toYaml .Values.kafkaExporter.resources | nindent 12 }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "notification-control-plane-observability.fullname" . }}-kafka-exporter
+  namespace: {{ .Values.exportersNamespace }}
+  labels:
+    {{- include "notification-control-plane-observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafka-exporter
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "notification-control-plane-observability.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: kafka-exporter
+  ports:
+    - name: http
+      port: {{ .Values.kafkaExporter.service.port }}
+      targetPort: http
