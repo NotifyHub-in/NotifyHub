@@ -339,8 +339,8 @@ img {
 .hero-poster {
   position: relative;
   z-index: 1;
-  width: min(86%, 620px);
-  max-height: 78%;
+  width: min(96%, 820px);
+  max-height: 86%;
   height: auto;
   display: block;
   object-fit: contain;
@@ -1074,8 +1074,8 @@ th {
   }
 
   .hero-poster {
-    width: min(90%, 420px);
-    max-height: 82%;
+    width: min(96%, 560px);
+    max-height: 86%;
   }
 
   .section-head {
