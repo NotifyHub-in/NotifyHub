@@ -1,6 +1,6 @@
 # Implementation Changes
 
-This document records the major changes we made to evolve the Notification Control Plane into a managed-provider platform with production-shaped connector behavior.
+This document records the major changes we made to evolve the NotifyHub into a managed-provider platform with production-shaped connector behavior.
 
 ## Summary Of The Changes
 
@@ -23,10 +23,10 @@ We added provider account models and persistence so provider credentials are reg
 
 Key files:
 
-- [libs/contracts/notification/provider_accounts.go](/Users/Shaik/notifications/notification-control-plane/libs/contracts/notification/provider_accounts.go)
-- [libs/storage/postgres/provider_accounts.go](/Users/Shaik/notifications/notification-control-plane/libs/storage/postgres/provider_accounts.go)
-- [migrations/0004_provider_accounts.sql](/Users/Shaik/notifications/notification-control-plane/migrations/0004_provider_accounts.sql)
-- [apps/api/cmd/api/main.go](/Users/Shaik/notifications/notification-control-plane/apps/api/cmd/api/main.go)
+- [libs/contracts/notification/provider_accounts.go](/libs/contracts/notification/provider_accounts.go)
+- [libs/storage/postgres/provider_accounts.go](/libs/storage/postgres/provider_accounts.go)
+- [migrations/0004_provider_accounts.sql](/migrations/0004_provider_accounts.sql)
+- [apps/api/cmd/api/main.go](/apps/api/cmd/api/main.go)
 
 ### Why it was needed
 
@@ -52,15 +52,15 @@ We added client identities and API-key auth for upstream services.
 
 Key files:
 
-- [libs/storage/postgres/notification_clients.go](/Users/Shaik/notifications/notification-control-plane/libs/storage/postgres/notification_clients.go)
-- [migrations/0008_notification_clients.sql](/Users/Shaik/notifications/notification-control-plane/migrations/0008_notification_clients.sql)
-- [apps/api/cmd/api/main.go](/Users/Shaik/notifications/notification-control-plane/apps/api/cmd/api/main.go)
+- [libs/storage/postgres/notification_clients.go](/libs/storage/postgres/notification_clients.go)
+- [migrations/0008_notification_clients.sql](/migrations/0008_notification_clients.sql)
+- [apps/api/cmd/api/main.go](/apps/api/cmd/api/main.go)
 
 ### Why it matters
 
 This made the control plane generic:
 
-- `communication-engine` is only one client
+- `upstream service` is only one client
 - any other service can now register and send
 - the request model is no longer tied to one upstream application
 
@@ -72,11 +72,11 @@ We expanded connectors into first-party managed channel services with provider-s
 
 Key files:
 
-- [connectors/email/cmd/connector-email/main.go](/Users/Shaik/notifications/notification-control-plane/connectors/email/cmd/connector-email/main.go)
-- [connectors/sms/cmd/connector-sms/main.go](/Users/Shaik/notifications/notification-control-plane/connectors/sms/cmd/connector-sms/main.go)
-- [connectors/whatsapp/cmd/connector-whatsapp/main.go](/Users/Shaik/notifications/notification-control-plane/connectors/whatsapp/cmd/connector-whatsapp/main.go)
-- [connectors/push/cmd/connector-push/main.go](/Users/Shaik/notifications/notification-control-plane/connectors/push/cmd/connector-push/main.go)
-- [connectors/webhook/cmd/connector-webhook/main.go](/Users/Shaik/notifications/notification-control-plane/connectors/webhook/cmd/connector-webhook/main.go)
+- [connectors/email/cmd/connector-email/main.go](/connectors/email/cmd/connector-email/main.go)
+- [connectors/sms/cmd/connector-sms/main.go](/connectors/sms/cmd/connector-sms/main.go)
+- [connectors/whatsapp/cmd/connector-whatsapp/main.go](/connectors/whatsapp/cmd/connector-whatsapp/main.go)
+- [connectors/push/cmd/connector-push/main.go](/connectors/push/cmd/connector-push/main.go)
+- [connectors/webhook/cmd/connector-webhook/main.go](/connectors/webhook/cmd/connector-webhook/main.go)
 
 ### Providers supported in code
 
@@ -98,10 +98,10 @@ We added callback-route storage and callback verification, then taught the callb
 
 Key files:
 
-- [migrations/0006_callback_routes.sql](/Users/Shaik/notifications/notification-control-plane/migrations/0006_callback_routes.sql)
-- [libs/storage/postgres/callback_routes.go](/Users/Shaik/notifications/notification-control-plane/libs/storage/postgres/callback_routes.go)
-- [libs/contracts/notification/provider_callbacks.go](/Users/Shaik/notifications/notification-control-plane/libs/contracts/notification/provider_callbacks.go)
-- [apps/callback-gateway/cmd/callback-gateway/main.go](/Users/Shaik/notifications/notification-control-plane/apps/callback-gateway/cmd/callback-gateway/main.go)
+- [migrations/0006_callback_routes.sql](/migrations/0006_callback_routes.sql)
+- [libs/storage/postgres/callback_routes.go](/libs/storage/postgres/callback_routes.go)
+- [libs/contracts/notification/provider_callbacks.go](/libs/contracts/notification/provider_callbacks.go)
+- [apps/callback-gateway/cmd/callback-gateway/main.go](/apps/callback-gateway/cmd/callback-gateway/main.go)
 
 ### Current callback coverage
 
@@ -118,10 +118,10 @@ We moved secret resolution out of the worker and into the connectors.
 
 Key files:
 
-- [libs/core/secrets/resolver.go](/Users/Shaik/notifications/notification-control-plane/libs/core/secrets/resolver.go)
-- [apps/worker/cmd/worker/main.go](/Users/Shaik/notifications/notification-control-plane/apps/worker/cmd/worker/main.go)
+- [libs/core/secrets/resolver.go](/libs/core/secrets/resolver.go)
+- [apps/worker/cmd/worker/main.go](/apps/worker/cmd/worker/main.go)
 - connector main files for all channels
-- [deployments/docker/compose.yml](/Users/Shaik/notifications/notification-control-plane/deployments/docker/compose.yml)
+- [deployments/docker/compose.yml](/deployments/docker/compose.yml)
 
 ### Why it matters
 
@@ -144,11 +144,11 @@ We added and hardened:
 
 Key files:
 
-- [libs/contracts/notification/types.go](/Users/Shaik/notifications/notification-control-plane/libs/contracts/notification/types.go)
-- [libs/core/render/render.go](/Users/Shaik/notifications/notification-control-plane/libs/core/render/render.go)
-- [connectors/push/cmd/connector-push/main.go](/Users/Shaik/notifications/notification-control-plane/connectors/push/cmd/connector-push/main.go)
-- [connectors/whatsapp/cmd/connector-whatsapp/main.go](/Users/Shaik/notifications/notification-control-plane/connectors/whatsapp/cmd/connector-whatsapp/main.go)
-- [migrations/0007_template_metadata.sql](/Users/Shaik/notifications/notification-control-plane/migrations/0007_template_metadata.sql)
+- [libs/contracts/notification/types.go](/libs/contracts/notification/types.go)
+- [libs/core/render/render.go](/libs/core/render/render.go)
+- [connectors/push/cmd/connector-push/main.go](/connectors/push/cmd/connector-push/main.go)
+- [connectors/whatsapp/cmd/connector-whatsapp/main.go](/connectors/whatsapp/cmd/connector-whatsapp/main.go)
+- [migrations/0007_template_metadata.sql](/migrations/0007_template_metadata.sql)
 
 ### Why it matters
 
@@ -165,15 +165,15 @@ We added `language_code` to the request and template models, then taught the API
 
 Key files:
 
-- [libs/contracts/notification/types.go](/Users/Shaik/notifications/notification-control-plane/libs/contracts/notification/types.go)
-- [libs/storage/postgres/postgres.go](/Users/Shaik/notifications/notification-control-plane/libs/storage/postgres/postgres.go)
-- [apps/api/cmd/api/main.go](/Users/Shaik/notifications/notification-control-plane/apps/api/cmd/api/main.go)
-- [apps/worker/cmd/worker/main.go](/Users/Shaik/notifications/notification-control-plane/apps/worker/cmd/worker/main.go)
-- [migrations/0010_template_language_codes.sql](/Users/Shaik/notifications/notification-control-plane/migrations/0010_template_language_codes.sql)
+- [libs/contracts/notification/types.go](/libs/contracts/notification/types.go)
+- [libs/storage/postgres/postgres.go](/libs/storage/postgres/postgres.go)
+- [apps/api/cmd/api/main.go](/apps/api/cmd/api/main.go)
+- [apps/worker/cmd/worker/main.go](/apps/worker/cmd/worker/main.go)
+- [migrations/0010_template_language_codes.sql](/migrations/0010_template_language_codes.sql)
 
 ### Why it matters
 
-This makes the platform behave more like CE and more like a real multi-language notification system:
+This makes the platform behave more like client and more like a real multi-language notification system:
 
 - the upstream service can request a language explicitly
 - templates can be stored per language
@@ -188,11 +188,11 @@ We removed the older `provider_bindings.config_refs` path and tightened the sche
 
 Key files:
 
-- [migrations/0009_remove_legacy_provider_binding_config_refs.sql](/Users/Shaik/notifications/notification-control-plane/migrations/0009_remove_legacy_provider_binding_config_refs.sql)
-- [libs/contracts/notification/types.go](/Users/Shaik/notifications/notification-control-plane/libs/contracts/notification/types.go)
-- [libs/storage/postgres/postgres.go](/Users/Shaik/notifications/notification-control-plane/libs/storage/postgres/postgres.go)
-- [apps/api/cmd/api/main.go](/Users/Shaik/notifications/notification-control-plane/apps/api/cmd/api/main.go)
-- [apps/worker/cmd/worker/main.go](/Users/Shaik/notifications/notification-control-plane/apps/worker/cmd/worker/main.go)
+- [migrations/0009_remove_legacy_provider_binding_config_refs.sql](/migrations/0009_remove_legacy_provider_binding_config_refs.sql)
+- [libs/contracts/notification/types.go](/libs/contracts/notification/types.go)
+- [libs/storage/postgres/postgres.go](/libs/storage/postgres/postgres.go)
+- [apps/api/cmd/api/main.go](/apps/api/cmd/api/main.go)
+- [apps/worker/cmd/worker/main.go](/apps/worker/cmd/worker/main.go)
 
 ### Why it matters
 
@@ -210,10 +210,10 @@ We added metrics around admin APIs and connector behavior, then added them to Gr
 
 Key files:
 
-- [apps/api/cmd/api/main.go](/Users/Shaik/notifications/notification-control-plane/apps/api/cmd/api/main.go)
+- [apps/api/cmd/api/main.go](/apps/api/cmd/api/main.go)
 - connector main files
-- [deployments/docker/grafana/provisioning/dashboards/json/notification-control-plane-overview.json](/Users/Shaik/notifications/notification-control-plane/deployments/docker/grafana/provisioning/dashboards/json/notification-control-plane-overview.json)
-- [deployments/docker/grafana/provisioning/dashboards/json/notification-control-plane-load-test.json](/Users/Shaik/notifications/notification-control-plane/deployments/docker/grafana/provisioning/dashboards/json/notification-control-plane-load-test.json)
+- [deployments/docker/grafana/provisioning/dashboards/json/notification-control-plane-overview.json](/deployments/docker/grafana/provisioning/dashboards/json/notification-control-plane-overview.json)
+- [deployments/docker/grafana/provisioning/dashboards/json/notification-control-plane-load-test.json](/deployments/docker/grafana/provisioning/dashboards/json/notification-control-plane-load-test.json)
 
 ### Important new metrics
 
@@ -235,7 +235,7 @@ Key files:
 
 ## Net Result
 
-The platform now behaves like a real managed notification control plane:
+The platform now behaves like a real managed NotifyHub:
 
 - upstream services send canonical requests
 - managed provider accounts hold provider setup

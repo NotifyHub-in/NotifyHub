@@ -9,21 +9,24 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/app"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/httpx"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/secrets"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/serviceinfo"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/webhooks"
-	"github.com/Arunshaik2001/notification-control-plane/libs/observability/logging"
-	"github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
-	"github.com/Arunshaik2001/notification-control-plane/libs/storage/postgres"
+	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/app"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/config"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/httpx"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/id"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/secrets"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/serviceinfo"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/webhooks"
+	"github.com/NotifyHub-in/NotifyHub/libs/observability/logging"
+	"github.com/NotifyHub-in/NotifyHub/libs/observability/metrics"
+	"github.com/NotifyHub-in/NotifyHub/libs/storage/postgres"
 )
 
 func main() {
@@ -61,137 +64,76 @@ func main() {
 			}
 
 			def, providerKnown := notification.ProviderDefinitionByKey(parts[0])
-			if providerKnown && def.CallbackMode == "none" {
-				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "unsupported"})
-				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "provider callbacks are not supported"})
-				return
-			}
-
 			route, routeErr := store.GetCallbackRouteByProviderKey(r.Context(), parts[0])
-			if providerKnown && def.CallbackMode != "none" {
-				if routeErr != nil {
-					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "route_missing"})
-					httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "callback route not configured"})
-					return
-				}
-				if !route.Enabled {
-					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "route_disabled"})
-					httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "callback route not configured"})
-					return
-				}
+			if errors.Is(routeErr, postgres.ErrNotFound) {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "route_missing"})
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "callback route not configured"})
+				return
+			}
+			if routeErr != nil {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "lookup_failed"})
+				logger.Error("load callback route failed", "error", routeErr, "provider", parts[0])
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load callback route"})
+				return
+			}
+			if !route.Enabled {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "route_disabled"})
+				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "callback route not configured"})
+				return
 			}
 
-			if routeErr == nil && route.Enabled {
-				if ok, verifyErr := verifyCallbackRequest(r, rawBody, route); verifyErr != nil {
-					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "verification_failed"})
-					logger.Error("verify provider callback failed", "error", verifyErr, "provider", parts[0], "provider_account_id", route.ProviderAccountID)
-					httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "callback verification failed"})
-					return
-				} else if !ok {
-					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "verification_failed"})
-					httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "callback verification failed"})
-					return
-				}
+			if ok, verifyErr := verifyCallbackRequest(r, rawBody, route, callbackVerificationSpecFor(def, providerKnown)); verifyErr != nil {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "verification_failed"})
+				logger.Error("verify provider callback failed", "error", verifyErr, "provider", parts[0], "provider_account_id", route.ProviderAccountID)
+				httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "callback verification failed"})
+				return
+			} else if !ok {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "verification_failed"})
+				httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "callback verification failed"})
+				return
 			}
 
-			callbacks, decodeErr := decodeProviderCallbacks(parts[0], r.Method, r.URL.Query(), rawBody)
-			if decodeErr != nil {
+			statusCallbacks, statusErr := decodeProviderCallbacks(def, providerKnown, r.Method, r.URL.Query(), rawBody)
+			if statusErr == nil && len(statusCallbacks) > 0 {
+				if err := handleProviderStatusCallbacks(r.Context(), store, notifier, registry, logger, parts[0], statusCallbacks); err != nil {
+					statusCode, message := providerCallbackErrorResponse(err)
+					httpx.WriteJSON(w, statusCode, map[string]string{"error": message})
+					return
+				}
+				httpx.WriteJSON(w, http.StatusAccepted, map[string]any{
+					"service":     info.Name,
+					"provider":    parts[0],
+					"received_at": time.Now().UTC(),
+					"callbacks":   statusCallbacks,
+				})
+				return
+			}
+
+			events, inboundErr := decodeProviderInboundEvents(def, providerKnown, r.Method, r.URL.Query(), rawBody)
+			if inboundErr != nil || len(events) == 0 {
+				message := ""
+				switch {
+				case statusErr != nil:
+					message = statusErr.Error()
+				case inboundErr != nil:
+					message = inboundErr.Error()
+				default:
+					message = "invalid payload"
+				}
 				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "invalid_payload"})
-				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": decodeErr.Error()})
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": message})
 				return
 			}
-			if len(callbacks) == 0 {
-				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "validation_failed"})
-				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider_message_id and status are required"})
+			if err := handleProviderInboundEvents(r.Context(), store, notifier, registry, logger, parts[0], events); err != nil {
+				statusCode, message := providerChannelEventErrorResponse(err)
+				httpx.WriteJSON(w, statusCode, map[string]string{"error": message})
 				return
 			}
-
-			responses := make([]map[string]any, 0, len(callbacks))
-			for _, payload := range callbacks {
-				if payload.ProviderMessageID == "" || payload.Status == "" {
-					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "validation_failed"})
-					httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "provider_message_id and status are required"})
-					return
-				}
-
-				attempt, err := store.GetDeliveryAttemptByProviderMessageID(r.Context(), payload.ProviderMessageID)
-				if errors.Is(err, postgres.ErrNotFound) {
-					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "attempt_not_found"})
-					httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "delivery attempt not found for provider_message_id"})
-					return
-				}
-				if err != nil {
-					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "lookup_failed"})
-					logger.Error("load delivery attempt by provider message id failed", "error", err, "provider_message_id", payload.ProviderMessageID)
-					httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load delivery attempt"})
-					return
-				}
-
-				attempt.Status = normalizeAttemptStatus(payload.Status)
-				attempt.ErrorMessage = normalizedErrorMessage(payload)
-				if err := store.UpdateDeliveryAttempt(r.Context(), attempt); err != nil {
-					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "update_attempt_failed"})
-					logger.Error("update delivery attempt from callback failed", "error", err, "attempt_id", attempt.AttemptID)
-					httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "update delivery attempt"})
-					return
-				}
-
-				requestStatus, err := recomputeRequestStatus(r.Context(), store, attempt.RequestID)
-				if err != nil {
-					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "recompute_request_failed"})
-					logger.Error("recompute request status failed", "error", err, "request_id", attempt.RequestID)
-					httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "recompute request status"})
-					return
-				}
-				if err := store.UpdateNotificationRequestStatus(r.Context(), attempt.RequestID, requestStatus); err != nil {
-					registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "update_request_failed"})
-					logger.Error("update request status from callback failed", "error", err, "request_id", attempt.RequestID)
-					httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "update request status"})
-					return
-				}
-
-				record, err := store.GetNotificationRequest(r.Context(), attempt.RequestID)
-				if err == nil {
-					registry.ObserveHistogram("notification_end_to_end_seconds", "End-to-end notification latency in seconds from API acceptance to observed terminal or dispatched state.", map[string]string{
-						"stage":        "callback",
-						"final_status": string(requestStatus),
-						"provider":     parts[0],
-					}, metrics.DefaultLatencyBuckets(), time.Since(record.RequestedAt).Seconds())
-				}
-
-				if err := notifier.NotifyRequestUpdated(r.Context(), attempt.RequestID, map[string]interface{}{
-					"source":              "callback-gateway",
-					"provider":            parts[0],
-					"provider_message_id": payload.ProviderMessageID,
-				}); err != nil {
-					logger.Error("notify lifecycle webhook failed", "error", err, "request_id", attempt.RequestID)
-				}
-
-				registry.IncCounter("delivery_status_updates_total", "Delivery status updates normalized from provider callbacks.", map[string]string{
-					"channel":   string(attempt.Channel),
-					"connector": attempt.ConnectorName,
-					"provider":  parts[0],
-					"status":    string(attempt.Status),
-				})
-				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{
-					"provider":          parts[0],
-					"outcome":           "accepted",
-					"normalized_status": string(attempt.Status),
-				})
-				responses = append(responses, map[string]any{
-					"request_id":          attempt.RequestID,
-					"attempt_id":          attempt.AttemptID,
-					"normalized_status":   attempt.Status,
-					"provider_message_id": payload.ProviderMessageID,
-					"request_status":      requestStatus,
-				})
-			}
-
 			httpx.WriteJSON(w, http.StatusAccepted, map[string]any{
 				"service":     info.Name,
 				"provider":    parts[0],
 				"received_at": time.Now().UTC(),
-				"callbacks":   responses,
+				"events":      events,
 			})
 		}
 
@@ -203,21 +145,178 @@ func main() {
 	}
 }
 
-func verifyCallbackRequest(r *http.Request, rawBody []byte, route notification.CallbackRoute) (bool, error) {
-	if route.VerificationMode == "" || route.VerificationMode == notification.CallbackVerificationModeNone {
+type providerCallbackHTTPError struct {
+	statusCode int
+	message    string
+}
+
+func (e *providerCallbackHTTPError) Error() string {
+	return e.message
+}
+
+func providerCallbackErrorResponse(err error) (int, string) {
+	var httpErr *providerCallbackHTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.statusCode, httpErr.message
+	}
+	return http.StatusInternalServerError, "process provider callback"
+}
+
+func providerChannelEventErrorResponse(err error) (int, string) {
+	var httpErr *providerCallbackHTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.statusCode, httpErr.message
+	}
+	return http.StatusInternalServerError, "process inbound channel event"
+}
+
+func handleProviderStatusCallbacks(ctx context.Context, store *postgres.Store, notifier *webhooks.Notifier, registry *metrics.Registry, logger *slog.Logger, provider string, callbacks []notification.ProviderCallback) error {
+	for _, payload := range callbacks {
+		if payload.ProviderMessageID == "" || payload.Status == "" {
+			registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": provider, "outcome": "validation_failed"})
+			return &providerCallbackHTTPError{statusCode: http.StatusBadRequest, message: "provider_message_id and status are required"}
+		}
+
+		attempt, err := store.GetDeliveryAttemptByProviderMessageID(ctx, payload.ProviderMessageID)
+		if errors.Is(err, postgres.ErrNotFound) {
+			registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": provider, "outcome": "attempt_not_found"})
+			return &providerCallbackHTTPError{statusCode: http.StatusNotFound, message: "delivery attempt not found for provider_message_id"}
+		}
+		if err != nil {
+			registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": provider, "outcome": "lookup_failed"})
+			logger.Error("load delivery attempt by provider message id failed", "error", err, "provider_message_id", payload.ProviderMessageID)
+			return &providerCallbackHTTPError{statusCode: http.StatusInternalServerError, message: "load delivery attempt"}
+		}
+
+		attempt.Status = normalizeAttemptStatus(payload.Status)
+		attempt.ErrorMessage = normalizedErrorMessage(payload)
+		if err := store.UpdateDeliveryAttempt(ctx, attempt); err != nil {
+			registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": provider, "outcome": "update_attempt_failed"})
+			logger.Error("update delivery attempt from callback failed", "error", err, "attempt_id", attempt.AttemptID)
+			return &providerCallbackHTTPError{statusCode: http.StatusInternalServerError, message: "update delivery attempt"}
+		}
+
+		requestStatus, err := recomputeRequestStatus(ctx, store, attempt.RequestID)
+		if err != nil {
+			registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": provider, "outcome": "recompute_request_failed"})
+			logger.Error("recompute request status failed", "error", err, "request_id", attempt.RequestID)
+			return &providerCallbackHTTPError{statusCode: http.StatusInternalServerError, message: "recompute request status"}
+		}
+		if err := store.UpdateNotificationRequestStatus(ctx, attempt.RequestID, requestStatus); err != nil {
+			registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": provider, "outcome": "update_request_failed"})
+			logger.Error("update request status from callback failed", "error", err, "request_id", attempt.RequestID)
+			return &providerCallbackHTTPError{statusCode: http.StatusInternalServerError, message: "update request status"}
+		}
+
+		record, err := store.GetNotificationRequest(ctx, attempt.RequestID)
+		if err == nil {
+			registry.ObserveHistogram("notification_end_to_end_seconds", "End-to-end notification latency in seconds from API acceptance to observed terminal or dispatched state.", map[string]string{
+				"stage":        "callback",
+				"final_status": string(requestStatus),
+				"provider":     provider,
+			}, metrics.DefaultLatencyBuckets(), time.Since(record.RequestedAt).Seconds())
+		}
+
+		if err := notifier.NotifyRequestUpdated(ctx, attempt.RequestID, map[string]interface{}{
+			"source":              "callback-gateway",
+			"provider":            provider,
+			"provider_message_id": payload.ProviderMessageID,
+		}); err != nil {
+			logger.Error("notify lifecycle webhook failed", "error", err, "request_id", attempt.RequestID)
+		}
+
+		registry.IncCounter("delivery_status_updates_total", "Delivery status updates normalized from provider callbacks.", map[string]string{
+			"channel":   string(attempt.Channel),
+			"connector": attempt.ConnectorName,
+			"provider":  provider,
+			"status":    string(attempt.Status),
+		})
+		registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{
+			"provider":          provider,
+			"outcome":           "accepted",
+			"normalized_status": string(attempt.Status),
+		})
+	}
+	return nil
+}
+
+func handleProviderInboundEvents(ctx context.Context, store *postgres.Store, notifier *webhooks.Notifier, registry *metrics.Registry, logger *slog.Logger, provider string, events []notification.ChannelEvent) error {
+	for _, event := range events {
+		event.ProviderKey = provider
+		if event.Channel == "" {
+			event.Channel = notification.ChannelWhatsApp
+		}
+		event.Direction = notification.ChannelEventDirectionInbound
+		if event.Status == "" {
+			event.Status = notification.ChannelEventStatusReceived
+		}
+		if event.EventID == "" {
+			event.EventID = id.New(12)
+		}
+		if event.ReceivedAt.IsZero() {
+			event.ReceivedAt = time.Now().UTC()
+		}
+		if err := store.UpsertChannelEvent(ctx, event); err != nil {
+			registry.IncCounter("channel_events_total", "Inbound channel event outcomes.", map[string]string{"provider": provider, "outcome": "persist_failed"})
+			logger.Error("persist inbound channel event failed", "error", err, "provider", provider, "event_type", event.EventType)
+			return &providerCallbackHTTPError{statusCode: http.StatusInternalServerError, message: "store inbound channel event"}
+		}
+		registry.IncCounter("channel_events_total", "Inbound channel event outcomes.", map[string]string{
+			"provider":   provider,
+			"channel":    string(event.Channel),
+			"event_type": event.EventType,
+			"status":     string(event.Status),
+			"outcome":    "stored",
+		})
+		if err := notifier.NotifyChannelEvent(ctx, event, map[string]any{
+			"source":      "callback-gateway",
+			"provider":    provider,
+			"channel":     event.Channel,
+			"event_type":  event.EventType,
+			"external_id": event.ExternalMessageID,
+			"reply_to_id": event.ReplyToMessageID,
+		}); err != nil {
+			logger.Error("notify inbound channel webhook failed", "error", err, "provider", provider, "event_type", event.EventType)
+		}
+	}
+	return nil
+}
+
+type callbackVerifier interface {
+	Verify(r *http.Request, rawBody []byte, route notification.CallbackRoute, spec notification.CallbackVerificationSpec) (bool, error)
+}
+
+type callbackVerifierFunc func(r *http.Request, rawBody []byte, route notification.CallbackRoute, spec notification.CallbackVerificationSpec) (bool, error)
+
+func (fn callbackVerifierFunc) Verify(r *http.Request, rawBody []byte, route notification.CallbackRoute, spec notification.CallbackVerificationSpec) (bool, error) {
+	return fn(r, rawBody, route, spec)
+}
+
+var callbackVerifiers = map[notification.CallbackVerificationMode]callbackVerifier{
+	notification.CallbackVerificationModeNone: callbackVerifierFunc(func(_ *http.Request, _ []byte, _ notification.CallbackRoute, _ notification.CallbackVerificationSpec) (bool, error) {
 		return true, nil
-	}
-
-	secret, err := secrets.Resolve(route.VerificationSecretRef)
-	if err != nil {
-		return false, err
-	}
-
-	switch route.VerificationMode {
-	case notification.CallbackVerificationModeSharedSecret:
-		return r.Header.Get("X-Provider-Secret") == secret, nil
-	case notification.CallbackVerificationModeHMACSHA256:
-		signature := strings.TrimSpace(r.Header.Get("X-Provider-Signature"))
+	}),
+	notification.CallbackVerificationModeSharedSecret: callbackVerifierFunc(func(r *http.Request, _ []byte, route notification.CallbackRoute, spec notification.CallbackVerificationSpec) (bool, error) {
+		secret, err := secrets.Resolve(route.VerificationSecretRef)
+		if err != nil {
+			return false, err
+		}
+		headerName := spec.SecretHeader
+		if headerName == "" {
+			headerName = "X-Provider-Secret"
+		}
+		return r.Header.Get(headerName) == secret, nil
+	}),
+	notification.CallbackVerificationModeHMACSHA256: callbackVerifierFunc(func(r *http.Request, rawBody []byte, route notification.CallbackRoute, spec notification.CallbackVerificationSpec) (bool, error) {
+		secret, err := secrets.Resolve(route.VerificationSecretRef)
+		if err != nil {
+			return false, err
+		}
+		headerName := spec.SignatureHeader
+		if headerName == "" {
+			headerName = "X-Provider-Signature"
+		}
+		signature := strings.TrimSpace(r.Header.Get(headerName))
 		if signature == "" {
 			return false, nil
 		}
@@ -225,34 +324,44 @@ func verifyCallbackRequest(r *http.Request, rawBody []byte, route notification.C
 		_, _ = mac.Write(rawBody)
 		expected := hex.EncodeToString(mac.Sum(nil))
 		return hmac.Equal([]byte(signature), []byte(expected)), nil
-	default:
-		return false, fmt.Errorf("unsupported verification mode %q", route.VerificationMode)
+	}),
+}
+
+func callbackVerificationSpecFor(def notification.ProviderDefinition, ok bool) notification.CallbackVerificationSpec {
+	if ok && def.CallbackVerification != nil {
+		return *def.CallbackVerification
+	}
+	return notification.CallbackVerificationSpec{
+		SecretHeader:    "X-Provider-Secret",
+		SignatureHeader: "X-Provider-Signature",
 	}
 }
 
-func decodeProviderCallbacks(providerKey, method string, query url.Values, rawBody []byte) ([]notification.ProviderCallback, error) {
-	switch providerKey {
-	case "gupshup-whatsapp":
-		if method != http.MethodPost {
-			return nil, fmt.Errorf("gupshup whatsapp callbacks must use POST")
-		}
-		return decodeGupshupWhatsAppCallbacks(rawBody)
-	case "karix-whatsapp":
-		if method != http.MethodPost {
-			return nil, fmt.Errorf("karix whatsapp callbacks must use POST")
-		}
-		return decodeKarixWhatsAppCallback(rawBody)
-	case "gupshup-sms":
-		if method != http.MethodPost {
-			return nil, fmt.Errorf("gupshup sms callbacks must use POST")
-		}
-		return decodeGupshupSMSCallbacks(rawBody)
-	case "karix-sms":
-		if method != http.MethodGet {
-			return nil, fmt.Errorf("karix sms callbacks must use GET")
-		}
-		return decodeKarixSMSCallback(query)
-	default:
+func verifyCallbackRequest(r *http.Request, rawBody []byte, route notification.CallbackRoute, spec notification.CallbackVerificationSpec) (bool, error) {
+	mode := route.VerificationMode
+	if mode == "" {
+		mode = notification.CallbackVerificationModeNone
+	}
+
+	verifier, ok := callbackVerifiers[mode]
+	if !ok {
+		return false, fmt.Errorf("unsupported verification mode %q", mode)
+	}
+	return verifier.Verify(r, rawBody, route, spec)
+}
+
+type callbackDecoder interface {
+	Decode(method string, query url.Values, rawBody []byte) ([]notification.ProviderCallback, error)
+}
+
+type callbackDecoderFunc func(method string, query url.Values, rawBody []byte) ([]notification.ProviderCallback, error)
+
+func (fn callbackDecoderFunc) Decode(method string, query url.Values, rawBody []byte) ([]notification.ProviderCallback, error) {
+	return fn(method, query, rawBody)
+}
+
+var callbackDecoders = map[string]callbackDecoder{
+	"generic-json": callbackDecoderFunc(func(_ string, _ url.Values, rawBody []byte) ([]notification.ProviderCallback, error) {
 		var payload notification.ProviderCallback
 		if err := json.Unmarshal(rawBody, &payload); err != nil {
 			return nil, fmt.Errorf("invalid callback payload")
@@ -261,7 +370,71 @@ func decodeProviderCallbacks(providerKey, method string, query url.Values, rawBo
 			return nil, fmt.Errorf("provider_message_id and status are required")
 		}
 		return []notification.ProviderCallback{payload}, nil
+	}),
+	"gupshup-whatsapp": callbackDecoderFunc(func(method string, _ url.Values, rawBody []byte) ([]notification.ProviderCallback, error) {
+		if method != http.MethodPost {
+			return nil, fmt.Errorf("gupshup whatsapp callbacks must use POST")
+		}
+		return decodeGupshupWhatsAppCallbacks(rawBody)
+	}),
+	"karix-whatsapp": callbackDecoderFunc(func(method string, _ url.Values, rawBody []byte) ([]notification.ProviderCallback, error) {
+		if method != http.MethodPost {
+			return nil, fmt.Errorf("karix whatsapp callbacks must use POST")
+		}
+		return decodeKarixWhatsAppCallback(rawBody)
+	}),
+	"gupshup-sms": callbackDecoderFunc(func(method string, _ url.Values, rawBody []byte) ([]notification.ProviderCallback, error) {
+		if method != http.MethodPost {
+			return nil, fmt.Errorf("gupshup sms callbacks must use POST")
+		}
+		return decodeGupshupSMSCallbacks(rawBody)
+	}),
+	"karix-sms": callbackDecoderFunc(func(method string, query url.Values, _ []byte) ([]notification.ProviderCallback, error) {
+		if method != http.MethodGet {
+			return nil, fmt.Errorf("karix sms callbacks must use GET")
+		}
+		return decodeKarixSMSCallback(query)
+	}),
+}
+
+type channelEventDecoder interface {
+	Decode(method string, query url.Values, rawBody []byte) ([]notification.ChannelEvent, error)
+}
+
+type channelEventDecoderFunc func(method string, query url.Values, rawBody []byte) ([]notification.ChannelEvent, error)
+
+func (fn channelEventDecoderFunc) Decode(method string, query url.Values, rawBody []byte) ([]notification.ChannelEvent, error) {
+	return fn(method, query, rawBody)
+}
+
+var inboundEventDecoders = map[string]channelEventDecoder{
+	"gupshup-whatsapp": channelEventDecoderFunc(decodeGupshupWhatsAppInboundEvents),
+	"meta-whatsapp":    channelEventDecoderFunc(decodeMetaWhatsAppInboundEvents),
+}
+
+func decodeProviderCallbacks(def notification.ProviderDefinition, providerKnown bool, method string, query url.Values, rawBody []byte) ([]notification.ProviderCallback, error) {
+	decoderKey := "generic-json"
+	if providerKnown && def.CallbackDecoder != "" {
+		decoderKey = def.CallbackDecoder
 	}
+
+	decoder, ok := callbackDecoders[decoderKey]
+	if !ok {
+		return nil, fmt.Errorf("unsupported callback decoder %q", decoderKey)
+	}
+	return decoder.Decode(method, query, rawBody)
+}
+
+func decodeProviderInboundEvents(def notification.ProviderDefinition, providerKnown bool, method string, query url.Values, rawBody []byte) ([]notification.ChannelEvent, error) {
+	decoderKey := strings.TrimSpace(def.InboundDecoder)
+	if !providerKnown || decoderKey == "" {
+		return nil, fmt.Errorf("unsupported inbound decoder")
+	}
+	decoder, ok := inboundEventDecoders[decoderKey]
+	if !ok {
+		return nil, fmt.Errorf("unsupported inbound decoder %q", decoderKey)
+	}
+	return decoder.Decode(method, query, rawBody)
 }
 
 func decodeGupshupWhatsAppCallbacks(rawBody []byte) ([]notification.ProviderCallback, error) {
@@ -413,6 +586,206 @@ func decodeKarixSMSCallback(query url.Values) ([]notification.ProviderCallback, 
 			"reason": reason,
 		},
 	}}, nil
+}
+
+func decodeGupshupWhatsAppInboundEvents(_ string, _ url.Values, rawBody []byte) ([]notification.ChannelEvent, error) {
+	var payload notification.GupshupWhatsAppInboundMessage
+	if err := json.Unmarshal(rawBody, &payload); err != nil {
+		return nil, fmt.Errorf("invalid gupshup whatsapp inbound payload")
+	}
+	if strings.ToLower(strings.TrimSpace(payload.Type)) != "message" {
+		return nil, fmt.Errorf("not a gupshup inbound message payload")
+	}
+	event, err := channelEventFromGupshupInbound(payload)
+	if err != nil {
+		return nil, err
+	}
+	return []notification.ChannelEvent{event}, nil
+}
+
+func channelEventFromGupshupInbound(payload notification.GupshupWhatsAppInboundMessage) (notification.ChannelEvent, error) {
+	inbound := payload.Payload
+	body, mediaType, mediaURL, mediaName := extractGupshupInboundContent(inbound)
+	eventType := "message_received"
+	if inbound.Context != nil && (strings.TrimSpace(inbound.Context.ID) != "" || strings.TrimSpace(inbound.Context.GsID) != "") {
+		eventType = "reply_received"
+	}
+	conversationID := firstNonEmpty(gupshupInboundContextID(inbound.Context), gupshupInboundContextGsID(inbound.Context))
+	replyTo := firstNonEmpty(strings.TrimSpace(gupshupInboundContextGsID(inbound.Context)), strings.TrimSpace(gupshupInboundContextID(inbound.Context)))
+	return notification.ChannelEvent{
+		EventID:           id.New(12),
+		ProviderKey:       "gupshup-whatsapp",
+		Channel:           notification.ChannelWhatsApp,
+		Direction:         notification.ChannelEventDirectionInbound,
+		EventType:         eventType,
+		Status:            notification.ChannelEventStatusReceived,
+		ExternalMessageID: strings.TrimSpace(inbound.ID),
+		ReplyToMessageID:  replyTo,
+		ConversationID:    conversationID,
+		FromAddress:       strings.TrimSpace(inbound.Source),
+		Body:              body,
+		MediaType:         mediaType,
+		MediaURL:          mediaURL,
+		MediaName:         mediaName,
+		Payload: map[string]any{
+			"raw": payload,
+		},
+		Metadata: map[string]string{
+			"app":          payload.App,
+			"sender_name":  inbound.Sender.Name,
+			"message_type": inbound.Type,
+		},
+		ReceivedAt: time.UnixMilli(payload.Timestamp).UTC(),
+	}, nil
+}
+
+func extractGupshupInboundContent(payload notification.GupshupWhatsAppInboundPayload) (body, mediaType, mediaURL, mediaName string) {
+	switch strings.ToLower(strings.TrimSpace(payload.Type)) {
+	case "text":
+		body = strings.TrimSpace(payload.Payload.Text)
+	case "image", "video", "audio", "document", "sticker":
+		body = strings.TrimSpace(firstNonEmpty(payload.Payload.Caption, payload.Payload.Text))
+		mediaType = strings.ToLower(strings.TrimSpace(payload.Type))
+		mediaURL = strings.TrimSpace(payload.Payload.URL)
+		mediaName = strings.TrimSpace(payload.Payload.Name)
+	default:
+		body = strings.TrimSpace(firstNonEmpty(payload.Payload.Text, payload.Payload.Caption))
+		mediaType = strings.ToLower(strings.TrimSpace(payload.Type))
+	}
+	return body, mediaType, mediaURL, mediaName
+}
+
+func gupshupInboundContextID(ctx *notification.GupshupWhatsAppInboundContext) string {
+	if ctx == nil {
+		return ""
+	}
+	return strings.TrimSpace(ctx.ID)
+}
+
+func gupshupInboundContextGsID(ctx *notification.GupshupWhatsAppInboundContext) string {
+	if ctx == nil {
+		return ""
+	}
+	return strings.TrimSpace(ctx.GsID)
+}
+
+func decodeMetaWhatsAppInboundEvents(_ string, _ url.Values, rawBody []byte) ([]notification.ChannelEvent, error) {
+	var payload notification.MetaWhatsAppWebhookPayload
+	if err := json.Unmarshal(rawBody, &payload); err != nil {
+		return nil, fmt.Errorf("invalid meta whatsapp inbound payload")
+	}
+	var events []notification.ChannelEvent
+	for _, entry := range payload.Entry {
+		for _, change := range entry.Changes {
+			for _, msg := range change.Value.Messages {
+				event, err := channelEventFromMetaMessage(msg, change.Value)
+				if err != nil {
+					return nil, err
+				}
+				events = append(events, event)
+			}
+		}
+	}
+	if len(events) == 0 {
+		return nil, fmt.Errorf("no inbound messages found")
+	}
+	return events, nil
+}
+
+func channelEventFromMetaMessage(msg notification.MetaWhatsAppMessage, value notification.MetaWhatsAppWebhookValue) (notification.ChannelEvent, error) {
+	body, mediaType, mediaURL, mediaName := extractMetaMessageContent(msg)
+	eventType := "message_received"
+	if msg.Context != nil && strings.TrimSpace(msg.Context.ID) != "" {
+		eventType = "reply_received"
+	}
+	replyTo := ""
+	if msg.Context != nil {
+		replyTo = strings.TrimSpace(msg.Context.ID)
+	}
+	return notification.ChannelEvent{
+		EventID:           id.New(12),
+		ProviderKey:       "karix-whatsapp",
+		Channel:           notification.ChannelWhatsApp,
+		Direction:         notification.ChannelEventDirectionInbound,
+		EventType:         eventType,
+		Status:            notification.ChannelEventStatusReceived,
+		ExternalMessageID: strings.TrimSpace(msg.ID),
+		ReplyToMessageID:  replyTo,
+		FromAddress:       strings.TrimSpace(msg.From),
+		ToAddress:         strings.TrimSpace(value.Metadata.DisplayPhoneNumber),
+		Body:              body,
+		MediaType:         mediaType,
+		MediaURL:          mediaURL,
+		MediaName:         mediaName,
+		Payload: map[string]any{
+			"raw": msg,
+		},
+		Metadata: map[string]string{
+			"phone_number_id": value.Metadata.PhoneNumberID,
+			"message_type":    msg.Type,
+			"contact_name":    firstMetaContactName(value.Contacts),
+		},
+		ReceivedAt: parseMetaTimestamp(msg.Timestamp),
+	}, nil
+}
+
+func extractMetaMessageContent(msg notification.MetaWhatsAppMessage) (body, mediaType, mediaURL, mediaName string) {
+	switch strings.ToLower(strings.TrimSpace(msg.Type)) {
+	case "text":
+		if msg.Text != nil {
+			body = strings.TrimSpace(msg.Text.Body)
+		}
+	case "image":
+		mediaType = "image"
+		if msg.Image != nil {
+			mediaURL = strings.TrimSpace(msg.Image.ID)
+			mediaName = strings.TrimSpace(msg.Image.Caption)
+			body = strings.TrimSpace(msg.Image.Caption)
+		}
+	case "video":
+		mediaType = "video"
+		if msg.Video != nil {
+			mediaURL = strings.TrimSpace(msg.Video.ID)
+			mediaName = strings.TrimSpace(msg.Video.Caption)
+			body = strings.TrimSpace(msg.Video.Caption)
+		}
+	case "document":
+		mediaType = "document"
+		if msg.Document != nil {
+			mediaURL = strings.TrimSpace(msg.Document.ID)
+			mediaName = strings.TrimSpace(msg.Document.Caption)
+			body = strings.TrimSpace(msg.Document.Caption)
+		}
+	case "audio":
+		mediaType = "audio"
+		if msg.Audio != nil {
+			mediaURL = strings.TrimSpace(msg.Audio.ID)
+		}
+	case "sticker":
+		mediaType = "sticker"
+		if msg.Sticker != nil {
+			mediaURL = strings.TrimSpace(msg.Sticker.ID)
+		}
+	}
+	return body, mediaType, mediaURL, mediaName
+}
+
+func firstMetaContactName(contacts []notification.MetaWhatsAppContact) string {
+	if len(contacts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(contacts[0].Profile.Name)
+}
+
+func parseMetaTimestamp(raw string) time.Time {
+	if raw == "" {
+		return time.Now().UTC()
+	}
+	seconds, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return time.Now().UTC()
+	}
+	return time.Unix(seconds, 0).UTC()
 }
 
 func normalizeAttemptStatus(status string) notification.DeliveryAttemptStatus {

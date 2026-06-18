@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/id"
-	"github.com/Arunshaik2001/notification-control-plane/libs/storage/postgres"
+	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/id"
+	"github.com/NotifyHub-in/NotifyHub/libs/storage/postgres"
 )
 
 const (
@@ -79,6 +79,37 @@ func (n *Notifier) NotifyRequestUpdated(ctx context.Context, requestID string, m
 	return nil
 }
 
+func (n *Notifier) NotifyChannelEvent(ctx context.Context, event notification.ChannelEvent, metadata map[string]any) error {
+	subscriptions, err := n.store.ListEnabledWebhookSubscriptions(ctx)
+	if err != nil {
+		return fmt.Errorf("load webhook subscriptions: %w", err)
+	}
+	if len(subscriptions) == 0 {
+		return nil
+	}
+
+	payload, err := json.Marshal(notification.ChannelWebhookEvent{
+		EventType: "notification.channel_event.received",
+		Event:     event,
+		Metadata:  metadata,
+		SentAt:    time.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal channel webhook event: %w", err)
+	}
+
+	var deliveryErrors []string
+	for _, subscription := range subscriptions {
+		if err := n.deliverWebhookPayload(ctx, subscription, payload); err != nil {
+			deliveryErrors = append(deliveryErrors, err.Error())
+		}
+	}
+	if len(deliveryErrors) > 0 {
+		return fmt.Errorf("deliver channel webhooks: %s", strings.Join(deliveryErrors, "; "))
+	}
+	return nil
+}
+
 func (n *Notifier) deliverToSubscription(ctx context.Context, subscription notification.WebhookSubscription, requestID string, event notification.LifecycleWebhookEvent, payload []byte) error {
 	var lastErr error
 
@@ -141,6 +172,45 @@ func (n *Notifier) deliverToSubscription(ctx context.Context, subscription notif
 	}
 
 	return lastErr
+}
+
+func (n *Notifier) deliverWebhookPayload(ctx context.Context, subscription notification.WebhookSubscription, payload []byte) error {
+	var lastErr error
+	for attemptNumber := 1; attemptNumber <= maxWebhookDeliveryAttempts; attemptNumber++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, subscription.TargetURL, bytes.NewReader(payload))
+		if err != nil {
+			return fmt.Errorf("build webhook request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := n.client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("deliver webhook to %s: %w", subscription.TargetURL, err)
+		} else {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxWebhookResponseBody))
+			resp.Body.Close()
+			if resp.StatusCode >= http.StatusBadRequest {
+				lastErr = fmt.Errorf("deliver webhook to %s: target returned %d (%s)", subscription.TargetURL, resp.StatusCode, trimResponse(string(body)))
+			} else {
+				return nil
+			}
+		}
+
+		if attemptNumber < maxWebhookDeliveryAttempts {
+			if err := sleepWithContext(ctx, webhookBackoff); err != nil {
+				return err
+			}
+		}
+	}
+	return lastErr
+}
+
+func trimResponse(body string) string {
+	body = strings.TrimSpace(body)
+	if len(body) > 200 {
+		return body[:200]
+	}
+	return body
 }
 
 func sleepWithContext(ctx context.Context, d time.Duration) error {

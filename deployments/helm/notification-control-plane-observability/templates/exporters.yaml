@@ -90,7 +90,9 @@ spec:
           image: "{{ .Values.kafkaExporter.image.repository }}:{{ .Values.kafkaExporter.image.tag }}"
           imagePullPolicy: IfNotPresent
           args:
-            - --kafka.server={{ .Values.kafkaExporter.brokersCSV }}
+            {{- range $broker := splitList "," .Values.kafkaExporter.brokersCSV }}
+            - --kafka.server={{ $broker | trim }}
+            {{- end }}
             - --group.filter={{ .Values.kafkaExporter.groupFilter }}
             - --topic.filter={{ .Values.kafkaExporter.topicFilter }}
           ports:

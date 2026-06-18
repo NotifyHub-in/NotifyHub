@@ -1,0 +1,98 @@
+global:
+  appEnv: production
+  appVersion: ""
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  labels: {}
+  secretVolume:
+    enabled: true
+    name: notification-control-plane-secrets
+    mountPath: /run/notification-secrets
+    readOnly: true
+
+auth:
+  createSecret: false
+  existingSecret: notification-control-plane-auth
+  adminToken: ""
+  readToken: ""
+  adminTokenKey: notification-admin-api-token
+  readTokenKey: notification-readonly-api-token
+
+database:
+  url: ""
+
+kafka:
+  brokers: ""
+  notificationTopic: notification.requests
+  workerGroupID: notification-worker
+
+api:
+  replicaCount: 2
+  port: 8080
+  authRequired: true
+  rateLimit:
+    enabled: true
+    anonymousRPS: 2
+    anonymousBurst: 4
+    clientRPS: 10
+    clientBurst: 20
+    readRPS: 15
+    readBurst: 30
+    adminRPS: 10
+    adminBurst: 20
+    cleanupInterval: 5m
+    entryTTL: 15m
+
+worker:
+  replicaCount: 2
+  port: 8081
+
+callbackGateway:
+  replicaCount: 2
+  port: 8082
+
+connectors:
+  replicaCount: 2
+  secretVolumeEnabled: true
+  definitions:
+    - name: connector-email
+      port: 8091
+    - name: connector-sms
+      port: 8092
+    - name: connector-webhook
+      port: 8093
+    - name: connector-push
+      port: 8094
+    - name: connector-whatsapp
+      port: 8095
+
+images:
+  api:
+    repository: ""
+    tag: ""
+  worker:
+    repository: ""
+    tag: ""
+  callback-gateway:
+    repository: ""
+    tag: ""
+  migrate:
+    repository: ""
+    tag: ""
+  connector-email:
+    repository: ""
+    tag: ""
+  connector-sms:
+    repository: ""
+    tag: ""
+  connector-webhook:
+    repository: ""
+    tag: ""
+  connector-push:
+    repository: ""
+    tag: ""
+  connector-whatsapp:
+    repository: ""
+    tag: ""
+
+resources: {}

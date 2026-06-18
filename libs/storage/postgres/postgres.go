@@ -11,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
-	obsmetrics "github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
+	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
+	obsmetrics "github.com/NotifyHub-in/NotifyHub/libs/observability/metrics"
 )
 
 var ErrNotFound = errors.New("record not found")
@@ -1465,6 +1465,158 @@ func (s *Store) ListWebhookDeliveryAttempts(ctx context.Context, requestID strin
 		return nil, fmt.Errorf("iterate webhook delivery attempts: %w", err)
 	}
 	return attempts, nil
+}
+
+func (s *Store) UpsertChannelEvent(ctx context.Context, event notification.ChannelEvent) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("upsert_channel_event", startedAt, err)
+	}()
+
+	payloadJSON, err := json.Marshal(event.Payload)
+	if err != nil {
+		return fmt.Errorf("marshal channel event payload: %w", err)
+	}
+	metadataJSON, err := json.Marshal(event.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal channel event metadata: %w", err)
+	}
+
+	const query = `
+		INSERT INTO channel_events (
+			event_id, provider_key, provider_account_id, channel, direction, event_type, status,
+			external_message_id, reply_to_message_id, conversation_id, from_address, to_address,
+			body, media_type, media_url, media_name, payload, metadata, received_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		ON CONFLICT (event_id)
+		DO UPDATE SET
+			provider_key = EXCLUDED.provider_key,
+			provider_account_id = EXCLUDED.provider_account_id,
+			channel = EXCLUDED.channel,
+			direction = EXCLUDED.direction,
+			event_type = EXCLUDED.event_type,
+			status = EXCLUDED.status,
+			external_message_id = EXCLUDED.external_message_id,
+			reply_to_message_id = EXCLUDED.reply_to_message_id,
+			conversation_id = EXCLUDED.conversation_id,
+			from_address = EXCLUDED.from_address,
+			to_address = EXCLUDED.to_address,
+			body = EXCLUDED.body,
+			media_type = EXCLUDED.media_type,
+			media_url = EXCLUDED.media_url,
+			media_name = EXCLUDED.media_name,
+			payload = EXCLUDED.payload,
+			metadata = EXCLUDED.metadata,
+			received_at = EXCLUDED.received_at,
+			updated_at = NOW()
+	`
+
+	_, err = s.db.ExecContext(ctx, query,
+		event.EventID,
+		event.ProviderKey,
+		event.ProviderAccountID,
+		event.Channel,
+		event.Direction,
+		event.EventType,
+		event.Status,
+		event.ExternalMessageID,
+		event.ReplyToMessageID,
+		event.ConversationID,
+		event.FromAddress,
+		event.ToAddress,
+		event.Body,
+		event.MediaType,
+		event.MediaURL,
+		event.MediaName,
+		payloadJSON,
+		metadataJSON,
+		event.ReceivedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert channel event: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListChannelEvents(ctx context.Context, providerKey string, channel notification.Channel, limit int) (events []notification.ChannelEvent, err error) {
+	startedAt := time.Now()
+	defer func() {
+		observeDBOperation("list_channel_events", startedAt, err)
+	}()
+
+	query := `
+		SELECT event_id, provider_key, provider_account_id, channel, direction, event_type, status,
+		       external_message_id, reply_to_message_id, conversation_id, from_address, to_address,
+		       body, media_type, media_url, media_name, payload, metadata, received_at, created_at, updated_at
+		FROM channel_events
+		WHERE 1=1
+	`
+	args := make([]any, 0, 3)
+	if providerKey != "" {
+		args = append(args, providerKey)
+		query += fmt.Sprintf(" AND provider_key = $%d", len(args))
+	}
+	if channel != "" {
+		args = append(args, channel)
+		query += fmt.Sprintf(" AND channel = $%d", len(args))
+	}
+	query += " ORDER BY received_at DESC, created_at DESC"
+	if limit > 0 {
+		args = append(args, limit)
+		query += fmt.Sprintf(" LIMIT $%d", len(args))
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query channel events: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var event notification.ChannelEvent
+		var payloadJSON []byte
+		var metadataJSON []byte
+		if err := rows.Scan(
+			&event.EventID,
+			&event.ProviderKey,
+			&event.ProviderAccountID,
+			&event.Channel,
+			&event.Direction,
+			&event.EventType,
+			&event.Status,
+			&event.ExternalMessageID,
+			&event.ReplyToMessageID,
+			&event.ConversationID,
+			&event.FromAddress,
+			&event.ToAddress,
+			&event.Body,
+			&event.MediaType,
+			&event.MediaURL,
+			&event.MediaName,
+			&payloadJSON,
+			&metadataJSON,
+			&event.ReceivedAt,
+			&event.CreatedAt,
+			&event.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan channel event: %w", err)
+		}
+		if len(payloadJSON) > 0 {
+			if err := json.Unmarshal(payloadJSON, &event.Payload); err != nil {
+				return nil, fmt.Errorf("decode channel event payload: %w", err)
+			}
+		}
+		if len(metadataJSON) > 0 {
+			if err := json.Unmarshal(metadataJSON, &event.Metadata); err != nil {
+				return nil, fmt.Errorf("decode channel event metadata: %w", err)
+			}
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate channel events: %w", err)
+	}
+	return events, nil
 }
 
 func (s *Store) CountDeliveryAttemptsByRequestAndChannel(ctx context.Context, requestID string, channel notification.Channel) (count int, err error) {

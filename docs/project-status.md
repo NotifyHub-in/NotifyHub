@@ -1,8 +1,8 @@
 # Project Status
 
-This file tracks what has been built so far in the notification control plane and what still needs to be completed to make it production ready.
+This file tracks what has been built so far in the NotifyHub and what still needs to be completed to make it production ready.
 
-For the detailed production-readiness plan, sequencing, and go-live checklist, see [Production Release Plan](/Users/Shaik/notifications/notification-control-plane/docs/production-release-plan.md).
+For the detailed production-readiness plan, sequencing, and go-live checklist, see [Production Release Plan](/docs/production-release-plan.md).
 
 ## Completed Work
 
@@ -131,7 +131,8 @@ Provider selection now works like this:
 - [ ] Add signed outbound lifecycle webhooks
 - [ ] Add inbound callback signature verification
 - [ ] Add audit logs for policy, template, provider, and subscription changes
-- [ ] Add API rate limiting and abuse protection
+- [x] Add API rate limiting and abuse protection
+  Config-driven IP, client, read, and admin throttles now protect the northbound API and admin/query surfaces.
 
 ### Reliability And Correctness
 
@@ -163,8 +164,10 @@ Provider selection now works like this:
 - [ ] Add release versioning and changelog discipline
 - [x] Add basic CI checks for tests and formatting
   Why: the repo now runs a baseline GitHub Actions workflow for format checking and the normal Go test suite.
-- [ ] Add CI checks for image builds and broader release validation
-- [ ] Add image publishing and release automation
+- [x] Add CI checks for image builds and broader release validation
+  Why: the CI workflow now validates Docker builds for every shipped service image so release regressions are caught before a tag is published.
+- [x] Add image publishing and release automation
+  Why: a tag-driven GitHub Actions release workflow now publishes immutable GHCR images for the API, worker, callback gateway, migrate job, and all connectors.
 
 ### OSS And Product Readiness
 
@@ -174,7 +177,7 @@ Provider selection now works like this:
   Why: adopters can now understand the current API surface and resource shapes without reverse-engineering handler code.
 - [x] Add connector integration docs
   Why: provider contributors now have a single guide for the current connector contract, failure classification expectations, and extension workflow instead of reverse-engineering the reference connectors.
-- [x] Add example client integrations for common product patterns
+- [x] Add example integrations for common product patterns
   Why: adopters can now see concrete northbound usage patterns for transactional email, OTP SMS, and operational webhook alert flows without reading source code first.
 - [x] Add ADRs for key architecture decisions
   Why: the repo now records the main architectural choices around platform boundaries, storage and messaging, retries, provider bindings, and circuit breakers so contributors do not have to infer them from code history.
@@ -188,7 +191,6 @@ Provider selection now works like this:
 If we resume from here, the highest-value next sequence is:
 
 1. Release versioning and changelog discipline
-2. CI checks for image builds and broader release validation
-3. Image publishing and release automation
-4. Deeper test, chaos, and scaling hardening
-5. Alerting, tracing, and operator runbook maturity
+2. Deeper test, chaos, and scaling hardening
+3. Alerting, tracing, and operator runbook maturity
+4. Tighten rollout automation with changelog generation and signed release notes

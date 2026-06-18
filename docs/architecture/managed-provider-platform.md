@@ -1,6 +1,6 @@
 # Managed Provider Platform Design
 
-This document describes the target architecture for evolving the notification control plane from:
+This document describes the target architecture for evolving the NotifyHub from:
 
 - "clients bring and host their own connectors"
 
@@ -23,7 +23,7 @@ The control plane then owns:
 - secure runtime credential retrieval
 - observability and auditability
 
-For the phased delivery sequence, see [Managed Provider Platform Implementation Plan](/Users/Shaik/notifications/notification-control-plane/docs/architecture/managed-provider-platform-implementation-plan.md).
+For the phased delivery sequence, see [Managed Provider Platform Implementation Plan](/docs/architecture/managed-provider-platform-implementation-plan.md).
 
 ## Problem Statement
 
@@ -82,8 +82,8 @@ Clients do not write those connectors for standard providers.
 
 ```mermaid
 flowchart LR
-    APP["Client system / communication-engine"]
-    API["Notification Control Plane API"]
+    APP["Client system / upstream service"]
+    API["NotifyHub API"]
     CFG[(PostgreSQL config + state)]
     K["Kafka"]
     W["Worker"]
@@ -260,7 +260,7 @@ Example:
 ```json
 {
   "provider_account_id": "provacct_sms_twilio_prod",
-  "tenant_id": "communication-engine",
+  "tenant_id": "upstream service",
   "provider_key": "twilio-sms",
   "display_name": "Communication Engine Twilio Production",
   "channel": "sms",
@@ -269,8 +269,8 @@ Example:
     "from_number": "+14155550123"
   },
   "secret_refs": {
-    "account_sid": "secret://tenant/communication-engine/twilio/account-sid",
-    "auth_token": "secret://tenant/communication-engine/twilio/auth-token"
+    "account_sid": "secret://tenant/upstream service/twilio/account-sid",
+    "auth_token": "secret://tenant/upstream service/twilio/auth-token"
   }
 }
 ```
@@ -317,7 +317,7 @@ Example:
 
 ```json
 {
-  "ref": "secret://tenant/communication-engine/fcm/service-account",
+  "ref": "secret://tenant/upstream service/fcm/service-account",
   "material_type": "secret_json",
   "source": "vault",
   "version": "current"
@@ -385,7 +385,7 @@ Example:
   "provider_account_id": "provacct_sms_twilio_prod",
   "callback_path": "/v1/providers/twilio-sms/callbacks",
   "verification_mode": "signature",
-  "verification_secret_ref": "secret://tenant/communication-engine/twilio/webhook-signing-secret"
+  "verification_secret_ref": "secret://tenant/upstream service/twilio/webhook-signing-secret"
 }
 ```
 
@@ -540,8 +540,8 @@ Example runtime handoff:
     "from_number": "+14155550123"
   },
   "secret_refs": {
-    "account_sid": "secret://tenant/communication-engine/twilio/account-sid",
-    "auth_token": "secret://tenant/communication-engine/twilio/auth-token"
+    "account_sid": "secret://tenant/upstream service/twilio/account-sid",
+    "auth_token": "secret://tenant/upstream service/twilio/auth-token"
   }
 }
 ```
@@ -594,7 +594,7 @@ At runtime:
     "project_id": "nurture-farm"
   },
   "secret_refs": {
-    "service_account_json": "secret://tenant/communication-engine/fcm/nurture-farm-service-account"
+    "service_account_json": "secret://tenant/upstream service/fcm/nurture-farm-service-account"
   }
 }
 ```
@@ -615,8 +615,8 @@ Webhook and push are first-party connectors too. The difference is where the con
 
 ```mermaid
 flowchart LR
-    APP["communication-engine / upstream client"]
-    API["Notification Control Plane API"]
+    APP["upstream service / upstream client"]
+    API["NotifyHub API"]
     K["Kafka"]
     W["Worker"]
     CW["connector-webhook"]
@@ -722,4 +722,4 @@ The target architecture should be:
 - the worker stays provider-agnostic
 - secrets are stored outside Postgres and resolved at runtime through a typed resolver
 
-That is the product shape that lets clients trust the notification control plane as a real managed delivery platform instead of a framework they still have to finish themselves.
+That is the product shape that lets clients trust the NotifyHub as a real managed delivery platform instead of a framework they still have to finish themselves.

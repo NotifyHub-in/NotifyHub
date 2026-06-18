@@ -1,6 +1,6 @@
-# Notification Control Plane
+# NotifyHub
 
-An open-source, Go-based notification control plane for event-driven products.
+An open-source, Go-based notification platform called NotifyHub for event-driven products.
 
 This project is building toward a "Kubernetes for notifications" model: business systems publish notification intent, while the platform owns delivery orchestration, policy evaluation, retries, provider failover, callbacks, auditability, and observability.
 
@@ -21,7 +21,7 @@ The current platform already supports:
   - local Docker observability stack
 - unit tests, live integration tests, and a basic CI workflow
 
-For the build log and production-readiness checklist, see [docs/project-status.md](/Users/Shaik/notifications/notification-control-plane/docs/project-status.md).
+For the build log and production-readiness checklist, see [docs/project-status.md](/docs/project-status.md).
 
 ## Mental Model
 
@@ -178,21 +178,21 @@ make load-test
 
 ## API Docs
 
-- Documentation index: [docs/README.md](/Users/Shaik/notifications/notification-control-plane/docs/README.md)
-- OpenAPI-style contract: [docs/api/openapi.yaml](/Users/Shaik/notifications/notification-control-plane/docs/api/openapi.yaml)
-- Architecture notes: [docs/architecture/v1.md](/Users/Shaik/notifications/notification-control-plane/docs/architecture/v1.md)
-- Current project status: [docs/project-status.md](/Users/Shaik/notifications/notification-control-plane/docs/project-status.md)
-- Operator guide: [docs/operator-guide.md](/Users/Shaik/notifications/notification-control-plane/docs/operator-guide.md)
-- Production deployment guide: [docs/guides/deploy-to-production.md](/Users/Shaik/notifications/notification-control-plane/docs/guides/deploy-to-production.md)
-- Observability deployment guide: [docs/guides/deploy-observability-stack.md](/Users/Shaik/notifications/notification-control-plane/docs/guides/deploy-observability-stack.md)
-- Connector extension guide: [docs/connector-sdk.md](/Users/Shaik/notifications/notification-control-plane/docs/connector-sdk.md)
-- Roadmap: [docs/roadmap.md](/Users/Shaik/notifications/notification-control-plane/docs/roadmap.md)
+- Documentation index: [docs/README.md](/docs/README.md)
+- OpenAPI-style contract: [docs/api/openapi.yaml](/docs/api/openapi.yaml)
+- Architecture notes: [docs/architecture/v1.md](/docs/architecture/v1.md)
+- Current project status: [docs/project-status.md](/docs/project-status.md)
+- Operator guide: [docs/operator-guide.md](/docs/operator-guide.md)
+- Production deployment guide: [docs/guides/deploy-to-production.md](/docs/guides/deploy-to-production.md)
+- Observability deployment guide: [docs/guides/deploy-observability-stack.md](/docs/guides/deploy-observability-stack.md)
+- Connector extension guide: [docs/connector-sdk.md](/docs/connector-sdk.md)
+- Roadmap: [docs/roadmap.md](/docs/roadmap.md)
 
 ## Example Client Integrations
 
-- Transactional email: [examples/transactional-order-delay/README.md](/Users/Shaik/notifications/notification-control-plane/examples/transactional-order-delay/README.md)
-- OTP SMS: [examples/otp-sms/README.md](/Users/Shaik/notifications/notification-control-plane/examples/otp-sms/README.md)
-- Operational webhook alert: [examples/ops-webhook-alert/README.md](/Users/Shaik/notifications/notification-control-plane/examples/ops-webhook-alert/README.md)
+- Transactional email: [examples/transactional-order-delay/README.md](/examples/transactional-order-delay/README.md)
+- OTP SMS: [examples/otp-sms/README.md](/examples/otp-sms/README.md)
+- Operational webhook alert: [examples/ops-webhook-alert/README.md](/examples/ops-webhook-alert/README.md)
 
 ## Current Public API Surface
 
@@ -230,10 +230,10 @@ Provider callbacks are received through `callback-gateway`:
 
 ## Notes For Contributors
 
-- Add new schema changes as numbered files in [migrations](/Users/Shaik/notifications/notification-control-plane/migrations).
+- Add new schema changes as numbered files in [migrations](/migrations).
 - Keep connector-specific behavior behind connector processes rather than embedding provider logic into `api` or `worker`.
 - Prefer extending the unit and integration suites when changing worker decision logic, retries, or provider behavior.
-- Review architecture decisions in [docs/adr](/Users/Shaik/notifications/notification-control-plane/docs/adr) before making large design changes.
+- Review architecture decisions in [docs/adr](/docs/adr) before making large design changes.
 
 ## Production Readiness
 

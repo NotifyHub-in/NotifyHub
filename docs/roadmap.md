@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap is meant to show where the notification control plane can grow next without blurring the current product boundary.
+This roadmap is meant to show where the NotifyHub can grow next without blurring the current product boundary.
 
 ## Current Boundary
 
@@ -98,7 +98,7 @@ These are intentionally not immediate roadmap priorities because they would wide
 
 The intended direction is:
 
-`be the notification control plane that product teams build on`
+`be the NotifyHub that product teams build on`
 
 not:
 

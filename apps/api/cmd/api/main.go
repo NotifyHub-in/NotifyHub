@@ -10,21 +10,24 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/app"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/httpx"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/id"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/render"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/serviceinfo"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/webhooks"
-	kafkamq "github.com/Arunshaik2001/notification-control-plane/libs/messaging/kafka"
-	"github.com/Arunshaik2001/notification-control-plane/libs/observability/logging"
-	"github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
-	"github.com/Arunshaik2001/notification-control-plane/libs/storage/postgres"
+	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/app"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/config"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/httpx"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/id"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/ratelimit"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/render"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/serviceinfo"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/webhooks"
+	kafkamq "github.com/NotifyHub-in/NotifyHub/libs/messaging/kafka"
+	"github.com/NotifyHub-in/NotifyHub/libs/observability/logging"
+	"github.com/NotifyHub-in/NotifyHub/libs/observability/metrics"
+	"github.com/NotifyHub-in/NotifyHub/libs/storage/postgres"
+	"golang.org/x/time/rate"
 )
 
 func main() {
@@ -36,6 +39,12 @@ func main() {
 	logger := logging.New(cfg.ServiceName)
 	ctx := context.Background()
 	registry := metrics.NewRegistry(cfg.ServiceName)
+	rateLimitConfig := loadAPIRateLimitConfig()
+	rateLimiter := ratelimit.NewManager(ratelimit.Config{
+		Enabled:         rateLimitConfig.Enabled,
+		CleanupInterval: rateLimitConfig.CleanupInterval,
+		EntryTTL:        rateLimitConfig.EntryTTL,
+	})
 
 	store, err := postgres.Open(ctx, config.MustGetEnv("DATABASE_URL"))
 	if err != nil {
@@ -61,11 +70,28 @@ func main() {
 	err = app.RunHTTPService(cfg, logger, registry, func(mux *http.ServeMux, info serviceinfo.Info, registry *metrics.Registry) {
 		protect := func(requiredRole authRole, resource string, action string, handler func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
 			return func(w http.ResponseWriter, r *http.Request) {
+				if rateLimitConfig.Enabled {
+					if !allowAnonymousRateLimit(w, r, registry, rateLimiter, rateLimitConfig.AnonymousRPS, rateLimitConfig.AnonymousBurst, resource, action) {
+						return
+					}
+				}
 				role, err := authenticateControlPlaneRequest(r, adminAPIToken, readOnlyAPIToken, adminAuthRequired)
 				if err != nil {
 					recordAdminAPIEvent(registry, resource, action, "unauthorized")
 					httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 					return
+				}
+				if rateLimitConfig.Enabled {
+					switch role {
+					case authRoleAdmin:
+						if !allowRoleRateLimit(w, r, registry, rateLimiter, "admin", rateLimitConfig.AdminRPS, rateLimitConfig.AdminBurst, resource, action) {
+							return
+						}
+					case authRoleRead:
+						if !allowRoleRateLimit(w, r, registry, rateLimiter, "read", rateLimitConfig.ReadRPS, rateLimitConfig.ReadBurst, resource, action) {
+							return
+						}
+					}
 				}
 				if requiredRole == authRoleAdmin && role != authRoleAdmin {
 					recordAdminAPIEvent(registry, resource, action, "forbidden")
@@ -179,6 +205,11 @@ func main() {
 		}))
 
 		mux.HandleFunc("POST /v1/notification-requests", func(w http.ResponseWriter, r *http.Request) {
+			if rateLimitConfig.Enabled {
+				if !allowAnonymousRateLimit(w, r, registry, rateLimiter, rateLimitConfig.AnonymousRPS, rateLimitConfig.AnonymousBurst, "notification_request", "create") {
+					return
+				}
+			}
 			var req notification.NotificationRequest
 			if err := httpx.DecodeJSON(r, &req); err != nil {
 				registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "invalid_payload"})
@@ -191,6 +222,20 @@ func main() {
 				registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "unauthorized"})
 				httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": callerErr.Error()})
 				return
+			}
+			if rateLimitConfig.Enabled {
+				subject := caller.ClientID
+				if subject == "" || subject == "anonymous" {
+					subject = requestIP(r)
+					if subject == "" {
+						subject = "anonymous"
+					}
+				}
+				if !rateLimiter.Allow(rateLimitKey("client", subject), rate.Limit(rateLimitConfig.ClientRPS), rateLimitConfig.ClientBurst) {
+					registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{"outcome": "rate_limited"})
+					httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "notification request rate limit exceeded"})
+					return
+				}
 			}
 
 			if req.EventName == "" || req.TemplateKey == "" || req.IdempotencyKey == "" {
@@ -1071,6 +1116,31 @@ func main() {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "reload webhook subscription"})
 		}))
 
+		mux.HandleFunc("GET /v1/channel-events", protect(authRoleRead, "channel_event", "list", func(w http.ResponseWriter, r *http.Request) {
+			providerKey := strings.TrimSpace(r.URL.Query().Get("provider_key"))
+			channel := notification.Channel(strings.TrimSpace(r.URL.Query().Get("channel")))
+			limit := 100
+			if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+				parsed, err := strconv.Atoi(rawLimit)
+				if err != nil || parsed < 1 {
+					httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "limit must be a positive integer"})
+					return
+				}
+				if parsed > 500 {
+					parsed = 500
+				}
+				limit = parsed
+			}
+
+			events, err := store.ListChannelEvents(r.Context(), providerKey, channel, limit)
+			if err != nil {
+				logger.Error("list channel events failed", "error", err, "provider_key", providerKey, "channel", channel)
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load channel events"})
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"channel_events": events})
+		}))
+
 		mux.HandleFunc("GET /v1/notification-requests/{requestID}", protect(authRoleRead, "notification_request", "get", func(w http.ResponseWriter, r *http.Request) {
 			requestID := r.PathValue("requestID")
 			record, err := store.GetNotificationRequest(r.Context(), requestID)
@@ -1302,6 +1372,123 @@ func authenticateNotificationRequest(r *http.Request, store *postgres.Store, aut
 		return notification.NotificationClient{}, fmt.Errorf("notification client disabled")
 	}
 	return client, nil
+}
+
+type apiRateLimitConfig struct {
+	Enabled         bool
+	AnonymousRPS    float64
+	AnonymousBurst  int
+	ClientRPS       float64
+	ClientBurst     int
+	ReadRPS         float64
+	ReadBurst       int
+	AdminRPS        float64
+	AdminBurst      int
+	CleanupInterval time.Duration
+	EntryTTL        time.Duration
+}
+
+func loadAPIRateLimitConfig() apiRateLimitConfig {
+	return apiRateLimitConfig{
+		Enabled:         config.GetEnv("NOTIFICATION_RATE_LIMIT_ENABLED", "false") == "true",
+		AnonymousRPS:    parseEnvFloat("NOTIFICATION_RATE_LIMIT_ANON_RPS", 2),
+		AnonymousBurst:  parseEnvInt("NOTIFICATION_RATE_LIMIT_ANON_BURST", 4),
+		ClientRPS:       parseEnvFloat("NOTIFICATION_RATE_LIMIT_CLIENT_RPS", 10),
+		ClientBurst:     parseEnvInt("NOTIFICATION_RATE_LIMIT_CLIENT_BURST", 20),
+		ReadRPS:         parseEnvFloat("NOTIFICATION_RATE_LIMIT_READ_RPS", 15),
+		ReadBurst:       parseEnvInt("NOTIFICATION_RATE_LIMIT_READ_BURST", 30),
+		AdminRPS:        parseEnvFloat("NOTIFICATION_RATE_LIMIT_ADMIN_RPS", 10),
+		AdminBurst:      parseEnvInt("NOTIFICATION_RATE_LIMIT_ADMIN_BURST", 20),
+		CleanupInterval: parseEnvDuration("NOTIFICATION_RATE_LIMIT_CLEANUP_INTERVAL", 5*time.Minute),
+		EntryTTL:        parseEnvDuration("NOTIFICATION_RATE_LIMIT_ENTRY_TTL", 15*time.Minute),
+	}
+}
+
+func parseEnvFloat(key string, fallback float64) float64 {
+	value := config.GetEnv(key, "")
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func parseEnvInt(key string, fallback int) int {
+	value := config.GetEnv(key, "")
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func parseEnvDuration(key string, fallback time.Duration) time.Duration {
+	value := config.GetEnv(key, "")
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func rateLimitKey(prefix string, subject string) string {
+	return prefix + ":" + subject
+}
+
+func requestIP(r *http.Request) string {
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+		parts := strings.Split(forwarded, ",")
+		if len(parts) > 0 {
+			if ip := strings.TrimSpace(parts[0]); ip != "" {
+				return ip
+			}
+		}
+	}
+	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+		return realIP
+	}
+	host := r.RemoteAddr
+	if idx := strings.LastIndex(host, ":"); idx > -1 {
+		return strings.TrimSpace(host[:idx])
+	}
+	return strings.TrimSpace(host)
+}
+
+func allowAnonymousRateLimit(w http.ResponseWriter, r *http.Request, registry *metrics.Registry, limiter *ratelimit.Manager, rps float64, burst int, resource string, action string) bool {
+	subject := requestIP(r)
+	if subject == "" {
+		subject = "anonymous"
+	}
+	if limiter.Allow(rateLimitKey("anon", subject), rate.Limit(rps), burst) {
+		return true
+	}
+	recordAdminAPIEvent(registry, resource, action, "rate_limited")
+	w.Header().Set("Retry-After", "1")
+	httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
+	return false
+}
+
+func allowRoleRateLimit(w http.ResponseWriter, r *http.Request, registry *metrics.Registry, limiter *ratelimit.Manager, role string, rps float64, burst int, resource string, action string) bool {
+	subject := requestIP(r)
+	if subject == "" {
+		subject = "anonymous"
+	}
+	if limiter.Allow(rateLimitKey(role, subject), rate.Limit(rps), burst) {
+		return true
+	}
+	recordAdminAPIEvent(registry, resource, action, "rate_limited")
+	w.Header().Set("Retry-After", "1")
+	httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
+	return false
 }
 
 type authRole string

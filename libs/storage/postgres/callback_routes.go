@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
+	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
 )
 
 func (s *Store) UpsertCallbackRoute(ctx context.Context, route notification.CallbackRoute) (err error) {

@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/id"
+	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/id"
 )
 
 func (s *Store) UpsertProviderAccount(ctx context.Context, account notification.ProviderAccount) (err error) {

@@ -10,7 +10,7 @@ The project is intended to be reusable across many products and teams. The main 
 
 ## Decision
 
-The platform will operate as a notification control plane.
+The platform will operate as a NotifyHub.
 
 Business systems remain responsible for:
 

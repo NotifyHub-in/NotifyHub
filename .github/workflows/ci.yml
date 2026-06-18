@@ -24,3 +24,46 @@ jobs:
 
       - name: Run tests
         run: make test
+
+  image-builds:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            dockerfile: build/docker/api.Dockerfile
+          - name: worker
+            dockerfile: build/docker/worker.Dockerfile
+          - name: callback-gateway
+            dockerfile: build/docker/callback-gateway.Dockerfile
+          - name: migrate
+            dockerfile: build/docker/migrate.Dockerfile
+          - name: connector-email
+            dockerfile: build/docker/connector-email.Dockerfile
+          - name: connector-sms
+            dockerfile: build/docker/connector-sms.Dockerfile
+          - name: connector-webhook
+            dockerfile: build/docker/connector-webhook.Dockerfile
+          - name: connector-push
+            dockerfile: build/docker/connector-push.Dockerfile
+          - name: connector-whatsapp
+            dockerfile: build/docker/connector-whatsapp.Dockerfile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.name }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: false
+          platforms: linux/amd64
+          tags: ghcr.io/${{ github.repository }}/${{ matrix.name }}:ci-${{ github.sha }}

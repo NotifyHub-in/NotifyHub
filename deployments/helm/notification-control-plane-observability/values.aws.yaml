@@ -1,0 +1,61 @@
+global:
+  appEnv: production
+  labels: {}
+
+appReleaseName: notification-control-plane
+appNamespace: platform
+exportersNamespace: exporters
+
+prometheus:
+  image:
+    repository: prom/prometheus
+    tag: v2.54.1
+  replicaCount: 1
+  scrapeInterval: 15s
+  evaluationInterval: 15s
+  retention: 7d
+  extraTargets: []
+  resources: {}
+
+cadvisor:
+  image:
+    repository: gcr.io/cadvisor/cadvisor
+    tag: v0.49.1
+  service:
+    port: 8080
+  resources: {}
+
+postgresExporter:
+  image:
+    repository: prometheuscommunity/postgres-exporter
+    tag: v0.15.0
+  replicaCount: 1
+  service:
+    port: 9187
+  existingSecret: notification-control-plane-observability-postgres-dsn
+  existingSecretKey: data-source-name
+  dataSourceName: ""
+  resources: {}
+
+kafkaExporter:
+  image:
+    repository: danielqsj/kafka-exporter
+    tag: v1.8.0
+  replicaCount: 1
+  service:
+    port: 9308
+  brokersCSV: b-1.notificationcontrolpl.2pyez7.c2.kafka.ap-south-1.amazonaws.com:9092,b-2.notificationcontrolpl.2pyez7.c2.kafka.ap-south-1.amazonaws.com:9092
+  groupFilter: notification-worker
+  topicFilter: notification.requests
+  resources: {}
+
+grafana:
+  image:
+    repository: grafana/grafana
+    tag: 11.2.0
+  replicaCount: 1
+  adminUser: admin
+  adminPassword: ""
+  service:
+    port: 3000
+  resources: {}

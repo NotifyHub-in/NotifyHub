@@ -12,7 +12,7 @@ Use this pattern when:
 
 ## Request Payload
 
-See [request.json](/Users/Shaik/notifications/notification-control-plane/examples/ops-webhook-alert/request.json).
+See [request.json](/examples/ops-webhook-alert/request.json).
 
 ## Send It
 

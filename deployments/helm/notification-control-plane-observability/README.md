@@ -1,6 +1,6 @@
-# Notification Control Plane Observability Helm Chart
+# NotifyHub Observability Helm Chart
 
-This chart deploys the basic observability stack for the Notification Control Plane:
+This chart deploys the basic observability stack for the NotifyHub:
 
 - Prometheus
 - Grafana
@@ -17,7 +17,7 @@ It is intentionally separate from the application chart so operators can install
 
 This chart is designed for a three-namespace split:
 
-- `platform` for the notification control plane app
+- `platform` for the NotifyHub app
 - `metrics` for Prometheus, Grafana, and cAdvisor
 - `exporters` for Postgres and Kafka exporters
 
@@ -73,7 +73,7 @@ If the app release uses secret-backed environment variables for the email connec
 
 ## Dashboards
 
-Grafana is provisioned with the existing Notification Control Plane dashboards:
+Grafana is provisioned with the existing NotifyHub dashboards:
 
 - overview
 - load test

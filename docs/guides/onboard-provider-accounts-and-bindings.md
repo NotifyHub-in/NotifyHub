@@ -1,12 +1,12 @@
 # Onboard Provider Accounts And Bindings
 
-This guide shows how to connect real delivery providers to the Notification Control Plane.
+This guide shows how to connect real delivery providers to the NotifyHub.
 
 This is the heart of the managed-provider model.
 
-Provider-account, binding, routing, template, preference, delivery, callback-route, and dead-letter write calls require the `X-Notification-Admin-Token` header. In the default local stack, the token is `integration-admin-token`.
+Provider-account, binding, routing, template, preference, delivery, callback-route, and dead-letter write calls require the `X-Notification-Admin-Token` header. In the default local stack, the token is `<admin-token>`.
 
-Read-only config and status endpoints accept either `X-Notification-Read-Token` or `X-Notification-Admin-Token`. In the default local stack, the read token is `integration-read-token`.
+Read-only config and status endpoints accept either `X-Notification-Read-Token` or `X-Notification-Admin-Token`. In the default local stack, the read token is `<read-token>`.
 
 ## Concepts First
 
@@ -102,12 +102,12 @@ curl -s -X POST http://localhost:8080/v1/provider-accounts \
     },
     "secret_refs": {
       "user": {
-        "ref": "file:///run/notification-secrets/ce_email_smtp_user.txt",
+        "ref": "file:///run/notification-secrets/smtp_user.txt",
         "material_type": "secret_string",
         "source": "file"
       },
       "password": {
-        "ref": "file:///run/notification-secrets/ce_email_smtp_password.txt",
+        "ref": "file:///run/notification-secrets/smtp_password.txt",
         "material_type": "secret_string",
         "source": "file"
       }
@@ -131,7 +131,7 @@ curl -s -X POST http://localhost:8080/v1/provider-accounts \
     },
     "secret_refs": {
       "service_account_json": {
-        "ref": "file:///run/notification-secrets/farm_fcm_content_adminsdk.json",
+        "ref": "file:///run/notification-secrets/firebase_service_account.json",
         "material_type": "secret_json",
         "source": "file"
       }
@@ -298,12 +298,12 @@ Variant 2:
   },
   "secret_refs": {
     "username": {
-      "ref": "file:///run/notification-secrets/ce_gupshup_sms_username.txt",
+      "ref": "file:///run/notification-secrets/sms_username.txt",
       "material_type": "secret_string",
       "source": "file"
     },
     "password": {
-      "ref": "file:///run/notification-secrets/ce_gupshup_sms_password.txt",
+      "ref": "file:///run/notification-secrets/sms_password.txt",
       "material_type": "secret_string",
       "source": "file"
     }

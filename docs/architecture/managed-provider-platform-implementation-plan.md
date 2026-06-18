@@ -4,9 +4,9 @@ This document turns the managed-provider platform design into a phased execution
 
 Use it together with:
 
-- [Managed Provider Platform Design](/Users/Shaik/notifications/notification-control-plane/docs/architecture/managed-provider-platform.md)
-- [System Architecture Dock](/Users/Shaik/notifications/notification-control-plane/docs/architecture/system-dock.md)
-- [communication-engine Multi-Channel Integration](/Users/Shaik/notifications/notification-control-plane/docs/integrations/communication-engine-multi-channel.md)
+- [Managed Provider Platform Design](/docs/architecture/managed-provider-platform.md)
+- [System Architecture Dock](/docs/architecture/system-dock.md)
+- [Upstream Service Multi-Channel Integration](/docs/integrations/upstream-service-multi-channel.md)
 
 The goal is to move from today's model:
 

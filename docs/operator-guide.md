@@ -1,8 +1,8 @@
 # Operator Guide
 
-This guide is for running and debugging the notification control plane as it exists today.
+This guide is for running and debugging the NotifyHub as it exists today.
 
-If you want the full step-by-step onboarding flow for using the platform, start with [User And Operator Guides](/Users/Shaik/notifications/notification-control-plane/docs/guides/README.md). This operator guide stays focused on runtime operations, inspection, and troubleshooting.
+If you want the full step-by-step onboarding flow for using the platform, start with [User And Operator Guides](/docs/guides/README.md). This operator guide stays focused on runtime operations, inspection, and troubleshooting.
 
 ## Local Stack
 
@@ -64,15 +64,15 @@ After the stack starts:
 - `worker` should report healthy and consume from Kafka
 - Grafana and Prometheus should show service targets as up
 
-Admin/config write calls must include `X-Notification-Admin-Token`. In the default local stack, the token is `integration-admin-token`.
+Admin/config write calls must include `X-Notification-Admin-Token`. In the default local stack, the token is `<admin-token>`.
 
-Read-only config and status calls can use `X-Notification-Read-Token` or the admin token. In the default local stack, the read token is `integration-read-token`.
+Read-only config and status calls can use `X-Notification-Read-Token` or the admin token. In the default local stack, the read token is `<read-token>`.
 
-For production packaging and rollback flow, use [Deploy To Production](/Users/Shaik/notifications/notification-control-plane/docs/guides/deploy-to-production.md).
+For production packaging and rollback flow, use [Deploy To Production](/docs/guides/deploy-to-production.md).
 
-## AFS-Admin Push Setup
+## Push Setup For An Upstream Service
 
-This control plane already supports push generically through the `fcm-push` provider. For the AFS-admin Firebase project, keep the setup on the same managed-provider pattern as the CE farm push integration: mount the control-plane secret directory into `connector-push`, register a file-backed provider account, and wire routing through the API.
+This control plane already supports push generically through the `fcm-push` provider. Keep the setup on the same managed-provider pattern as the upstream push integration: mount the control-plane secret directory into `connector-push`, register a file-backed provider account, and wire routing through the API.
 
 The connector should expose the secret directory at `/run/notification-secrets`, for example:
 
@@ -81,17 +81,17 @@ volumes:
   - ${NOTIFICATION_SECRETS_DIR:-/tmp/notification-control-plane-secrets}:/run/notification-secrets:ro
 ```
 
-Defaults used by the AFS-admin integration:
+Defaults used by the generic push integration:
 
-- source secret file: `/Users/Shaik/notifications/communication-engine/src/main/java/farm/nurture/communication/engine/resource/firebase_config/afs_admin_fcm_content_adminsdk.json`
-- mounted secret path in connector: `file:///run/notification-secrets/afs_admin_fcm_content_adminsdk.json`
+- source secret file: `<upstream-service-repo>/src/main/java/<app>/resource/firebase_config/firebase_service_account.json`
+- mounted secret path in connector: `file:///run/notification-secrets/firebase_service_account.json`
 - provider account provider key: `fcm-push`
-- binding set: `afs-admin-push`
-- routing event: `afs.admin.alert`
+- binding set: `upstream-service-push`
+- routing event: `service.alert`
 
-If your CE checkout lives somewhere else, copy the Firebase JSON into `NOTIFICATION_SECRETS_DIR` and keep the bind mount aligned with that directory.
+If your checkout lives somewhere else, copy the Firebase JSON into `NOTIFICATION_SECRETS_DIR` and keep the bind mount aligned with that directory.
 
-Then follow the API-based setup flow in [AFS-admin push integration](/Users/Shaik/notifications/notification-control-plane/docs/integrations/afs-admin-push.md). The device token belongs in `recipient.push_token`, not in provider configuration.
+Then follow the API-based setup flow in [Upstream Push Integration](/docs/integrations/upstream-push-integration.md). The device token belongs in `recipient.push_token`, not in provider configuration.
 
 Useful checks:
 

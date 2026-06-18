@@ -12,7 +12,7 @@ Use this pattern when:
 
 ## Request Payload
 
-See [request.json](/Users/Shaik/notifications/notification-control-plane/examples/transactional-order-delay/request.json).
+See [request.json](/examples/transactional-order-delay/request.json).
 
 ## Send It
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
+	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
 	"github.com/sony/gobreaker"
 )
 

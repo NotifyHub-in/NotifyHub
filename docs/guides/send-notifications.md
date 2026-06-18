@@ -46,6 +46,20 @@ Core fields:
 - optional `priority`
 - optional `expires_at`
 
+## Client Correlation And Metadata
+
+The control plane stays generic by preserving request metadata and returning its own `request_id`.
+
+If your service needs to correlate the lifecycle webhook back to a local record, include your own identifier in metadata when you submit the request. Any of these keys will work for downstream correlation consumers:
+
+- `correlation_id`
+- `source_request_id`
+- `source_reference_id`
+- `reference_id`
+- `request_id`
+
+The control plane will pass metadata through to lifecycle webhooks, and your service can map the event back to its own database row without hardcoding a control-plane-specific contract.
+
 ## Language Selection
 
 The control plane uses `language_code` to choose the template variant.

@@ -298,7 +298,7 @@ If exhausted:
 
 ## Why This Model Is Generic
 
-This interaction graph is not specific to `communication-engine`.
+This interaction graph is not specific to `upstream service`.
 
 Any upstream service can:
 

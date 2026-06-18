@@ -12,14 +12,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/app"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/httpx"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/secrets"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/serviceinfo"
-	"github.com/Arunshaik2001/notification-control-plane/libs/observability/logging"
-	"github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
+	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/app"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/config"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/httpx"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/secrets"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/serviceinfo"
+	"github.com/NotifyHub-in/NotifyHub/libs/observability/logging"
+	"github.com/NotifyHub-in/NotifyHub/libs/observability/metrics"
 )
 
 func main() {

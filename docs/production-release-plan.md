@@ -1,6 +1,6 @@
 # Production Release Plan
 
-This document is the detailed production-release plan for the Notification Control Plane.
+This document is the detailed production-release plan for the NotifyHub.
 
 It answers:
 
@@ -12,10 +12,10 @@ It answers:
 
 Use this together with:
 
-- [Project Status](/Users/Shaik/notifications/notification-control-plane/docs/project-status.md)
-- [Managed Provider Platform Design](/Users/Shaik/notifications/notification-control-plane/docs/architecture/managed-provider-platform.md)
-- [Managed Provider Platform Implementation Plan](/Users/Shaik/notifications/notification-control-plane/docs/architecture/managed-provider-platform-implementation-plan.md)
-- [Operator Guide](/Users/Shaik/notifications/notification-control-plane/docs/operator-guide.md)
+- [Project Status](/docs/project-status.md)
+- [Managed Provider Platform Design](/docs/architecture/managed-provider-platform.md)
+- [Managed Provider Platform Implementation Plan](/docs/architecture/managed-provider-platform-implementation-plan.md)
+- [Operator Guide](/docs/operator-guide.md)
 
 ## Release Goal
 
@@ -129,7 +129,7 @@ This is the highest-priority release area.
 - sign outbound lifecycle webhooks
 - verify inbound provider callbacks consistently
 - add audit logs for config changes
-- add API rate limiting and abuse protection
+- add config-based API rate limiting and abuse protection
 
 ### Why This Blocks Production
 
@@ -422,10 +422,15 @@ This is the most visible production gap today.
 ### What Is Still Pending
 
 - environment-specific deployment packaging
-- immutable image build and publish flow
 - release versioning
 - upgrade and rollback strategy
 - schema migration deployment strategy
+
+### What Is Now In Place
+
+- environment-specific deployment packaging
+- immutable image build validation in CI
+- tag-driven image publish workflow to GHCR for all shipped services
 
 ### Concrete Deliverables
 

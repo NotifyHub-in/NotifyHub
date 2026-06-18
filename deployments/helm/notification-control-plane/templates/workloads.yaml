@@ -54,6 +54,28 @@ spec:
                 secretKeyRef:
                   name: {{ include "notification-control-plane.authSecretName" . }}
                   key: {{ .Values.auth.readTokenKey }}
+            - name: NOTIFICATION_RATE_LIMIT_ENABLED
+              value: {{ ternary "true" "false" .Values.api.rateLimit.enabled | quote }}
+            - name: NOTIFICATION_RATE_LIMIT_ANON_RPS
+              value: {{ .Values.api.rateLimit.anonymousRPS | quote }}
+            - name: NOTIFICATION_RATE_LIMIT_ANON_BURST
+              value: {{ .Values.api.rateLimit.anonymousBurst | quote }}
+            - name: NOTIFICATION_RATE_LIMIT_CLIENT_RPS
+              value: {{ .Values.api.rateLimit.clientRPS | quote }}
+            - name: NOTIFICATION_RATE_LIMIT_CLIENT_BURST
+              value: {{ .Values.api.rateLimit.clientBurst | quote }}
+            - name: NOTIFICATION_RATE_LIMIT_READ_RPS
+              value: {{ .Values.api.rateLimit.readRPS | quote }}
+            - name: NOTIFICATION_RATE_LIMIT_READ_BURST
+              value: {{ .Values.api.rateLimit.readBurst | quote }}
+            - name: NOTIFICATION_RATE_LIMIT_ADMIN_RPS
+              value: {{ .Values.api.rateLimit.adminRPS | quote }}
+            - name: NOTIFICATION_RATE_LIMIT_ADMIN_BURST
+              value: {{ .Values.api.rateLimit.adminBurst | quote }}
+            - name: NOTIFICATION_RATE_LIMIT_CLEANUP_INTERVAL
+              value: {{ .Values.api.rateLimit.cleanupInterval | quote }}
+            - name: NOTIFICATION_RATE_LIMIT_ENTRY_TTL
+              value: {{ .Values.api.rateLimit.entryTTL | quote }}
           readinessProbe:
             httpGet:
               path: /healthz

@@ -13,8 +13,8 @@ global:
 auth:
   createSecret: true
   existingSecret: ""
-  adminToken: integration-admin-token
-  readToken: integration-read-token
+  adminToken: local-admin-token
+  readToken: local-read-token
 
 database:
   url: postgresql://notification:notification@local-postgresql.notification-control-plane.svc.cluster.local:5432/notification_control_plane?sslmode=disable
@@ -28,6 +28,18 @@ api:
   replicaCount: 1
   port: 8080
   authRequired: true
+  rateLimit:
+    enabled: false
+    anonymousRPS: 2
+    anonymousBurst: 4
+    clientRPS: 10
+    clientBurst: 20
+    readRPS: 15
+    readBurst: 30
+    adminRPS: 10
+    adminBurst: 20
+    cleanupInterval: 5m
+    entryTTL: 15m
 
 worker:
   replicaCount: 1

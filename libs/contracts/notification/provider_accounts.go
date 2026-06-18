@@ -16,14 +16,22 @@ const (
 )
 
 type ProviderDefinition struct {
-	ProviderKey          string                  `json:"provider_key"`
-	Channel              Channel                 `json:"channel"`
-	ConnectorName        string                  `json:"connector_name"`
-	AdapterKey           string                  `json:"adapter_key"`
-	Description          string                  `json:"description,omitempty"`
-	RequiredConfigSchema map[string]MaterialType `json:"required_config_schema"`
-	ConfigVariants       []ProviderConfigVariant `json:"config_variants,omitempty"`
-	CallbackMode         string                  `json:"callback_mode,omitempty"`
+	ProviderKey          string                    `json:"provider_key"`
+	Channel              Channel                   `json:"channel"`
+	ConnectorName        string                    `json:"connector_name"`
+	AdapterKey           string                    `json:"adapter_key"`
+	Description          string                    `json:"description,omitempty"`
+	RequiredConfigSchema map[string]MaterialType   `json:"required_config_schema"`
+	ConfigVariants       []ProviderConfigVariant   `json:"config_variants,omitempty"`
+	CallbackMode         string                    `json:"callback_mode,omitempty"`
+	CallbackDecoder      string                    `json:"callback_decoder,omitempty"`
+	InboundDecoder       string                    `json:"inbound_decoder,omitempty"`
+	CallbackVerification *CallbackVerificationSpec `json:"callback_verification,omitempty"`
+}
+
+type CallbackVerificationSpec struct {
+	SecretHeader    string `json:"secret_header,omitempty"`
+	SignatureHeader string `json:"signature_header,omitempty"`
 }
 
 type ProviderConfigVariant struct {
@@ -108,7 +116,12 @@ var providerDefinitions = []ProviderDefinition{
 			"account_sid": MaterialTypeSecretString,
 			"auth_token":  MaterialTypeSecretString,
 		},
-		CallbackMode: "signature",
+		CallbackMode:    "signature",
+		CallbackDecoder: "generic-json",
+		CallbackVerification: &CallbackVerificationSpec{
+			SecretHeader:    "X-Provider-Secret",
+			SignatureHeader: "X-Provider-Signature",
+		},
 	},
 	{
 		ProviderKey:   "gupshup-sms",
@@ -138,7 +151,12 @@ var providerDefinitions = []ProviderDefinition{
 				},
 			},
 		},
-		CallbackMode: "signature",
+		CallbackMode:    "signature",
+		CallbackDecoder: "generic-json",
+		CallbackVerification: &CallbackVerificationSpec{
+			SecretHeader:    "X-Provider-Secret",
+			SignatureHeader: "X-Provider-Signature",
+		},
 	},
 	{
 		ProviderKey:   "karix-sms",
@@ -168,7 +186,30 @@ var providerDefinitions = []ProviderDefinition{
 				},
 			},
 		},
-		CallbackMode: "signature",
+		CallbackMode:    "signature",
+		CallbackDecoder: "generic-json",
+		CallbackVerification: &CallbackVerificationSpec{
+			SecretHeader:    "X-Provider-Secret",
+			SignatureHeader: "X-Provider-Signature",
+		},
+	},
+	{
+		ProviderKey:   "dummy-sms",
+		Channel:       ChannelSMS,
+		ConnectorName: "connector-sms",
+		AdapterKey:    "dummy",
+		Description:   "Local dummy SMS provider for callback verification tests",
+		RequiredConfigSchema: map[string]MaterialType{
+			"base_url":        MaterialTypePlainString,
+			"callback_url":    MaterialTypePlainString,
+			"callback_secret": MaterialTypeSecretString,
+		},
+		CallbackMode:    "provider_callback",
+		CallbackDecoder: "generic-json",
+		CallbackVerification: &CallbackVerificationSpec{
+			SecretHeader:    "X-Provider-Secret",
+			SignatureHeader: "X-Provider-Signature",
+		},
 	},
 	{
 		ProviderKey:   "sendgrid-email",
@@ -209,7 +250,13 @@ var providerDefinitions = []ProviderDefinition{
 			"version":  MaterialTypePlainString,
 			"base_url": MaterialTypePlainString,
 		},
-		CallbackMode: "provider_callback",
+		CallbackMode:    "provider_callback",
+		CallbackDecoder: "gupshup-whatsapp",
+		InboundDecoder:  "gupshup-whatsapp",
+		CallbackVerification: &CallbackVerificationSpec{
+			SecretHeader:    "X-Provider-Secret",
+			SignatureHeader: "X-Provider-Signature",
+		},
 	},
 	{
 		ProviderKey:   "karix-whatsapp",
@@ -223,7 +270,13 @@ var providerDefinitions = []ProviderDefinition{
 			"version":  MaterialTypePlainString,
 			"base_url": MaterialTypePlainString,
 		},
-		CallbackMode: "provider_callback",
+		CallbackMode:    "provider_callback",
+		CallbackDecoder: "karix-whatsapp",
+		InboundDecoder:  "meta-whatsapp",
+		CallbackVerification: &CallbackVerificationSpec{
+			SecretHeader:    "X-Provider-Secret",
+			SignatureHeader: "X-Provider-Signature",
+		},
 	},
 	{
 		ProviderKey:   "fcm-push",

@@ -12,7 +12,7 @@ Use this pattern when:
 
 ## Request Payload
 
-See [request.json](/Users/Shaik/notifications/notification-control-plane/examples/otp-sms/request.json).
+See [request.json](/examples/otp-sms/request.json).
 
 ## Send It
 

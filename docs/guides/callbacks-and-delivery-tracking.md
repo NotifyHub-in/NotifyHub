@@ -31,6 +31,30 @@ You need:
 4. a callback route if the provider uses verified callbacks
 5. the provider dashboard configured to point at the callback URL
 
+## Generic Correlation Contract
+
+The control plane is intentionally generic. It does not know about client-specific table keys or internal identifiers.
+
+For lifecycle webhook consumers, the control plane sends:
+
+- `request_id`: the control-plane request identifier
+- `status`: the normalized request status
+- `metadata`: the original request metadata plus callback context
+
+If a downstream service needs to update its own tables, it should place its local correlation key in request metadata and read it back from the lifecycle webhook payload. Prefer one of these metadata keys:
+
+- `correlation_id`
+- `source_request_id`
+- `source_reference_id`
+- `reference_id`
+- `request_id`
+
+Recommended pattern for clients:
+
+- store the client-local ID in request metadata before calling the control plane
+- treat the control-plane `request_id` as the external notification ID
+- keep provider callback secrets and verification state inside the control-plane callback gateway, not in the client service
+
 ## Verification Secret Handling
 
 When the provider expects a shared secret or signature key, keep that secret out of the callback payload and out of the docs.
@@ -127,6 +151,26 @@ Examples:
 - provider `DELIVERED` -> delivered
 - provider `READ` -> delivered
 - explicit failure or error -> failed
+
+## WhatsApp Inbound Replies
+
+Delivery callbacks are not the same thing as inbound replies.
+
+When a WhatsApp user replies to a business message:
+
+1. the provider emits an inbound webhook
+2. the callback gateway normalizes the provider payload
+3. the control plane stores a generic `channel_event`
+4. the control plane emits a `notification.channel_event.received` webhook to subscribed services
+
+This is separate from the `notification.request.updated` lifecycle webhook used for delivery status updates.
+
+Relevant provider payload examples:
+
+- Gupshup inbound text/reply messages use the provider webhook shape documented for inbound messages and replies
+- Karix WhatsApp inbound replies should be normalized into the same internal channel-event model
+
+See [WhatsApp Inbound Replies](/docs/guides/whatsapp-inbound-replies.md) for the full flow.
 
 ## How To Inspect Callback Results
 

@@ -1,8 +1,8 @@
 # Deploy The Observability Stack
 
-This guide shows how to deploy the Notification Control Plane observability stack into Kubernetes using a three-namespace layout:
+This guide shows how to deploy the NotifyHub observability stack into Kubernetes using a three-namespace layout:
 
-- `platform` for the notification control plane app
+- `platform` for the NotifyHub app
 - `metrics` for Prometheus, Grafana, and cAdvisor
 - `exporters` for Postgres and Kafka exporters
 
@@ -13,7 +13,7 @@ It installs:
 - cAdvisor
 - Postgres exporter
 - Kafka exporter
-- the Notification Control Plane dashboards
+- the NotifyHub dashboards
 - Prometheus alert rules
 - a Grafana alerting dashboard
 
@@ -39,7 +39,7 @@ It can also scrape extra targets if you add them later.
 1. A Kubernetes cluster.
 2. `kubectl` access to that cluster.
 3. `helm` installed locally.
-4. The Notification Control Plane app chart already deployed in the `platform` namespace, or at least the app services available there.
+4. The NotifyHub app chart already deployed in the `platform` namespace, or at least the app services available there.
 5. The `exporters` namespace has a Postgres DSN secret.
 
 ## Recommended Order
@@ -155,7 +155,7 @@ http://localhost:9090
 
 Check targets and confirm:
 
-- the Notification Control Plane services are visible
+- the NotifyHub services are visible
 - the Postgres exporter target is healthy
 - the Kafka exporter target is healthy
 
@@ -177,9 +177,9 @@ Use the admin credentials from the Grafana secret.
 
 Confirm the dashboards load:
 
-- Notification Control Plane overview
-- Notification Control Plane load test
-- Notification Control Plane Alerts
+- NotifyHub overview
+- NotifyHub load test
+- NotifyHub Alerts
 
 The load-test dashboard now includes cAdvisor process CPU and memory panels, so you can see the monitoring pod itself in Grafana as well as the application services.
 
@@ -221,6 +221,6 @@ helm rollback notification-control-plane-observability <revision>
 
 ## Related Docs
 
-- [Deploy The Notification Control Plane To Kubernetes](/Users/Shaik/notifications/notification-control-plane/docs/guides/deploy-control-plane-to-kubernetes.md)
-- [Callbacks And Delivery Tracking](/Users/Shaik/notifications/notification-control-plane/docs/guides/callbacks-and-delivery-tracking.md)
-- [Channel Setup Checklist](/Users/Shaik/notifications/notification-control-plane/docs/guides/channel-setup-checklist.md)
+- [Deploy The NotifyHub To Kubernetes](/docs/guides/deploy-control-plane-to-kubernetes.md)
+- [Callbacks And Delivery Tracking](/docs/guides/callbacks-and-delivery-tracking.md)
+- [Channel Setup Checklist](/docs/guides/channel-setup-checklist.md)

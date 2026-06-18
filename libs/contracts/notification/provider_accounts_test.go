@@ -3,7 +3,7 @@ package notification
 import "testing"
 
 func TestProviderDefinitionsIncludeManagedProviders(t *testing.T) {
-	for _, providerKey := range []string{"twilio-sms", "gupshup-sms", "karix-sms", "sendgrid-email", "smtp-email", "gupshup-whatsapp", "karix-whatsapp", "fcm-push"} {
+	for _, providerKey := range []string{"twilio-sms", "gupshup-sms", "karix-sms", "dummy-sms", "sendgrid-email", "smtp-email", "gupshup-whatsapp", "karix-whatsapp", "fcm-push"} {
 		if _, ok := ProviderDefinitionByKey(providerKey); !ok {
 			t.Fatalf("expected provider definition %q to exist", providerKey)
 		}
@@ -148,5 +148,17 @@ func TestValidateProviderAccountSupportsSMSVariants(t *testing.T) {
 				t.Fatalf("ValidateProviderAccount returned error: %v", err)
 			}
 		})
+	}
+}
+
+func TestValidateCallbackRouteRejectsUnsupportedVerificationMode(t *testing.T) {
+	err := ValidateCallbackRoute(CallbackRoute{
+		ProviderKey:       "dummy-sms",
+		ProviderAccountID: "provacct_dummy_sms",
+		CallbackPath:      "/v1/providers/dummy-sms/callbacks",
+		VerificationMode:  CallbackVerificationMode("unsupported_mode"),
+	})
+	if err == nil {
+		t.Fatal("expected unsupported verification mode to fail validation")
 	}
 }

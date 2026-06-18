@@ -1,10 +1,10 @@
-# AFS-admin Push Integration
+# Upstream Push Integration
 
-This guide adds AFS-admin push to the Notification Control Plane without introducing any AFS-admin-specific runtime code.
+This guide shows how an upstream service can integrate push delivery with NotifyHub without introducing any service-specific runtime code.
 
-The control plane already has a generic `fcm-push` provider path. For AFS-admin, we only need to:
+The control plane already has a generic `fcm-push` provider path. For an upstream service, we only need to:
 
-1. mount the Firebase admin SDK JSON into the `connector-push` container through the control plane secret mount,
+1. mount the Firebase admin SDK JSON into the `connector-push` container through the control-plane secret mount,
 2. register a `fcm-push` provider account that points at that mounted file,
 3. bind that provider account to the `connector-push` service,
 4. add a routing policy and preference policy, and
@@ -12,15 +12,15 @@ The control plane already has a generic `fcm-push` provider path. For AFS-admin,
 
 ## Default paths and names
 
-- source Firebase JSON: `/Users/Shaik/notifications/communication-engine/src/main/java/farm/nurture/communication/engine/resource/firebase_config/afs_admin_fcm_content_adminsdk.json`
+- source Firebase JSON: `<upstream-service-repo>/src/main/java/<app>/resource/firebase_config/firebase_service_account.json`
 - host secret directory: `${NOTIFICATION_SECRETS_DIR:-/tmp/notification-control-plane-secrets}`
-- mounted secret path in connector: `file:///run/notification-secrets/afs_admin_fcm_content_adminsdk.json`
+- mounted secret path in connector: `file:///run/notification-secrets/firebase_service_account.json`
 - provider key: `fcm-push`
-- binding set: `afs-admin-push`
-- routing event: `afs.admin.alert`
-- template key: `afs-admin-alert-v1`
+- binding set: `upstream-service-push`
+- routing event: `service.alert`
+- template key: `upstream-alert-v1`
 
-If your CE checkout is in a different location, copy the Firebase JSON into `NOTIFICATION_SECRETS_DIR` before starting the stack.
+If your checkout is in a different location, copy the Firebase JSON into `NOTIFICATION_SECRETS_DIR` before starting the stack.
 
 ## Integration flow
 
@@ -38,7 +38,7 @@ Then register the managed-provider resources through the API.
 ```bash
 curl -s -X POST http://localhost:8080/v1/clients \
   -H 'Content-Type: application/json' \
-  -d '{"tenant_id":"afs-admin","client_name":"afs-admin-service","allowed_channels":["push"],"enabled":true}'
+  -d '{"tenant_id":"upstream-service","client_name":"upstream-service","allowed_channels":["push"],"enabled":true}'
 ```
 
 ### 2. Create the FCM provider account
@@ -47,15 +47,15 @@ curl -s -X POST http://localhost:8080/v1/clients \
 curl -s -X POST http://localhost:8080/v1/provider-accounts \
   -H 'Content-Type: application/json' \
   -d '{
-    "tenant_id": "afs-admin",
+    "tenant_id": "upstream-service",
     "provider_key": "fcm-push",
-    "display_name": "AFS Admin FCM",
+    "display_name": "Upstream FCM",
     "channel": "push",
     "enabled": true,
-    "config": {"project_id": "afs-admin"},
+    "config": {"project_id": "upstream-service"},
     "secret_refs": {
       "service_account_json": {
-        "ref": "file:///run/notification-secrets/afs_admin_fcm_content_adminsdk.json",
+        "ref": "file:///run/notification-secrets/firebase_service_account.json",
         "material_type": "secret_json",
         "source": "file"
       }
@@ -70,7 +70,7 @@ curl -s -X POST http://localhost:8080/v1/provider-bindings \
   -H 'Content-Type: application/json' \
   -d '{
     "channel": "push",
-    "binding_set": "afs-admin-push",
+    "binding_set": "upstream-service-push",
     "provider_account_id": "<provider_account_id>",
     "endpoint_url": "http://connector-push:8094",
     "enabled": true,
@@ -84,9 +84,9 @@ curl -s -X POST http://localhost:8080/v1/provider-bindings \
 curl -s -X POST http://localhost:8080/v1/routing-policies \
   -H 'Content-Type: application/json' \
   -d '{
-    "event_name": "afs.admin.alert",
+    "event_name": "service.alert",
     "channels": ["push"],
-    "binding_set": "afs-admin-push",
+    "binding_set": "upstream-service-push",
     "enabled": true,
     "priority": 10
   }'
@@ -98,7 +98,7 @@ curl -s -X POST http://localhost:8080/v1/routing-policies \
 curl -s -X POST http://localhost:8080/v1/preference-policies \
   -H 'Content-Type: application/json' \
   -d '{
-    "user_id": "afs-admin",
+    "user_id": "upstream-service",
     "channel": "push",
     "is_enabled": true
   }'
@@ -110,11 +110,11 @@ curl -s -X POST http://localhost:8080/v1/preference-policies \
 curl -s -X POST http://localhost:8080/v1/templates \
   -H 'Content-Type: application/json' \
   -d '{
-    "template_key": "afs-admin-alert-v1",
+    "template_key": "upstream-alert-v1",
     "channel": "push",
     "subject_template": "{{title}}",
     "body_template": "{{body}}",
-    "metadata": {"app": "afs-admin"},
+    "metadata": {"app": "upstream-service"},
     "enabled": true
   }'
 ```
@@ -128,21 +128,21 @@ curl -s -X POST http://localhost:8080/v1/notification-requests \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer <api_key>' \
   -d '{
-    "idempotency_key": "afs-admin-push-001",
-    "event_name": "afs.admin.alert",
-    "template_key": "afs-admin-alert-v1",
+    "idempotency_key": "upstream-service-push-001",
+    "event_name": "service.alert",
+    "template_key": "upstream-alert-v1",
     "channels": ["push"],
-    "binding_set": "afs-admin-push",
+    "binding_set": "upstream-service-push",
     "recipient": {
-      "user_id": "afs-admin",
+      "user_id": "upstream-service",
       "push_token": "<device_token>"
     },
     "variables": {
-      "title": "AFS-admin alert",
-      "body": "AFS-admin sync failed for batch 42"
+      "title": "upstream alert",
+      "body": "upstream sync failed for batch 42"
     },
     "metadata": {
-      "app": "afs-admin"
+      "app": "upstream-service"
     },
     "priority": "high"
   }'
@@ -150,7 +150,7 @@ curl -s -X POST http://localhost:8080/v1/notification-requests \
 
 ## Operational note
 
-If earlier local testing created duplicate AFS-admin `fcm-push` provider accounts, keep one managed file-backed account enabled and disable older env-backed duplicates.
+If earlier local testing created duplicate `fcm-push` provider accounts, keep one managed file-backed account enabled and disable older env-backed duplicates.
 
 ## Security notes
 

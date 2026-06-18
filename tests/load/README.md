@@ -1,6 +1,6 @@
 # Load Testing
 
-This load test exercises the notification control plane with a mix of:
+This load test exercises NotifyHub with a mix of:
 
 - happy-path email notifications
 - happy-path SMS notifications
@@ -38,5 +38,5 @@ go run ./tests/load/cmd/loadgen \
 
 Recommended dashboards:
 
-- `Notification Control Plane Overview`
-- `Notification Control Plane Load Test`
+- `NotifyHub Overview`
+- `NotifyHub Load Test`

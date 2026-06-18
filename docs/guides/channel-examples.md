@@ -124,10 +124,10 @@ That metadata belongs on the control-plane template resource, not in every reque
 - project ID: `nurture-farm`
 - service account file mounted into `connector-push`
 
-### AFS-admin example
+### Generic Push Example
 
 - provider key: `fcm-push`
-- project ID: `afs-admin`
+- project ID: `example-service`
 - separate service account file mounted into `connector-push`
 
 ## Webhook
@@ -155,16 +155,16 @@ That metadata belongs on the control-plane template resource, not in every reque
 }
 ```
 
-## communication-engine Example
+## Upstream Service Example
 
-For `communication-engine`, the clean mapping is:
+For an upstream service, the clean mapping is:
 
-- CE decides the event and recipient
-- CE chooses the template key
-- CE sends one canonical control-plane request
+- client decides the event and recipient
+- client chooses the template key
+- client sends one canonical control-plane request
 - control plane resolves provider bindings and delivery
 
-See [communication-engine multi-channel integration](/Users/Shaik/notifications/notification-control-plane/docs/integrations/communication-engine-multi-channel.md).
+See [Upstream Service Multi-Channel Integration](/docs/integrations/upstream-service-multi-channel.md).
 
 ## Default Language Rule
 

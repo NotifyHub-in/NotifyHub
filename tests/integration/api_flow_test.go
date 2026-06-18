@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
+	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
 )
 
 type testClient struct {
@@ -45,6 +45,10 @@ type providerBindingHealthResponse struct {
 
 type providerAccountsResponse struct {
 	ProviderAccounts []notification.ProviderAccount `json:"provider_accounts"`
+}
+
+type channelEventsResponse struct {
+	ChannelEvents []notification.ChannelEvent `json:"channel_events"`
 }
 
 type providerAccountStatusResponse struct {
@@ -311,6 +315,272 @@ func TestProviderCallbackVerificationWithRoute(t *testing.T) {
 	}
 }
 
+func TestDummySMSProviderEndToEndCallbackVerification(t *testing.T) {
+	client := requireIntegrationClient(t)
+	dummyProvider := startDummySMSProviderServer(t)
+	bindingSet := uniqueKey("dummy-sms-binding")
+
+	upsertTemplate(t, client, notification.TemplateUpsertRequest{
+		TemplateKey:  "dummy-sms-otp",
+		Channel:      notification.ChannelSMS,
+		BodyTemplate: "{{OTP}} is your verification code.",
+		Enabled:      true,
+	})
+
+	account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+		TenantID:    "communication-engine",
+		ProviderKey: "dummy-sms",
+		DisplayName: "Dummy SMS Callback Demo",
+		Channel:     notification.ChannelSMS,
+		Enabled:     true,
+		Config: map[string]string{
+			"base_url":     dummyProvider.baseURL(t),
+			"callback_url": client.callbackBaseURL + "/v1/providers/dummy-sms/callbacks",
+		},
+		SecretRefs: map[string]notification.SecretReference{
+			"callback_secret": {
+				Ref:          "CALLBACK_PROVIDER_SECRET_DEMO",
+				MaterialType: notification.MaterialTypeSecretString,
+				Source:       "env",
+			},
+		},
+	})
+	createCallbackRoute(t, client, notification.CallbackRouteUpsertRequest{
+		ProviderKey:       "dummy-sms",
+		ProviderAccountID: account.ProviderAccountID,
+		CallbackPath:      "/v1/providers/dummy-sms/callbacks",
+		VerificationMode:  notification.CallbackVerificationModeSharedSecret,
+		VerificationSecretRef: notification.SecretReference{
+			Ref:          "CALLBACK_PROVIDER_SECRET_DEMO",
+			MaterialType: notification.MaterialTypeSecretString,
+			Source:       "env",
+		},
+		Enabled: true,
+	})
+	createProviderBinding(t, client, notification.ProviderBindingUpsertRequest{
+		Channel:           notification.ChannelSMS,
+		BindingSet:        bindingSet,
+		ProviderAccountID: account.ProviderAccountID,
+		EndpointURL:       "http://connector-sms:8092",
+		Enabled:           true,
+		Priority:          100,
+	})
+
+	req := notification.NotificationRequest{
+		IdempotencyKey: uniqueKey("dummy-sms-request"),
+		EventName:      "otp.sent",
+		TemplateKey:    "dummy-sms-otp",
+		Channels:       []notification.Channel{notification.ChannelSMS},
+		BindingSet:     bindingSet,
+		Recipient: notification.Recipient{
+			UserID: "dummy-sms-user",
+			Phone:  "918700491033",
+		},
+		Variables: map[string]string{
+			"OTP": "123456",
+		},
+	}
+
+	accepted := postNotificationRequest(t, client, req)
+	delivered := waitForRequestCondition(t, client, accepted.RequestID, 20, 1*time.Second, func(details requestDetailsResponse) bool {
+		return details.Request.Status == notification.RequestStatusDelivered
+	})
+	if len(delivered.DeliveryAttempts) == 0 {
+		t.Fatal("expected delivery attempts for dummy provider")
+	}
+	if delivered.DeliveryAttempts[0].Status != notification.DeliveryAttemptDelivered {
+		t.Fatalf("delivery attempt status = %q, want %q", delivered.DeliveryAttempts[0].Status, notification.DeliveryAttemptDelivered)
+	}
+	if len(dummyProvider.requests()) == 0 {
+		t.Fatal("expected dummy provider to receive a send request")
+	}
+}
+
+func TestLifecycleWebhookDeliveredAfterProviderStatusUpdate(t *testing.T) {
+	client := requireIntegrationClient(t)
+	dummyProvider := startDummySMSProviderServer(t)
+	webhookSink := startHostCaptureServer(t)
+	bindingSet := uniqueKey("dummy-sms-webhook-binding")
+
+	subscription := createWebhookSubscription(t, client, notification.WebhookSubscriptionUpsertRequest{
+		TargetURL: webhookSink.baseURL(t) + "/lifecycle",
+		Enabled:   true,
+	})
+	if subscription.SubscriptionID == "" {
+		t.Fatal("expected webhook subscription id to be set")
+	}
+
+	upsertTemplate(t, client, notification.TemplateUpsertRequest{
+		TemplateKey:  "dummy-sms-otp-webhook",
+		Channel:      notification.ChannelSMS,
+		BodyTemplate: "{{OTP}} is your verification code.",
+		Enabled:      true,
+	})
+
+	account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+		TenantID:    "communication-engine",
+		ProviderKey: "dummy-sms",
+		DisplayName: "Dummy SMS Webhook Demo",
+		Channel:     notification.ChannelSMS,
+		Enabled:     true,
+		Config: map[string]string{
+			"base_url":     dummyProvider.baseURL(t),
+			"callback_url": client.callbackBaseURL + "/v1/providers/dummy-sms/callbacks",
+		},
+		SecretRefs: map[string]notification.SecretReference{
+			"callback_secret": {
+				Ref:          "CALLBACK_PROVIDER_SECRET_DEMO",
+				MaterialType: notification.MaterialTypeSecretString,
+				Source:       "env",
+			},
+		},
+	})
+	createCallbackRoute(t, client, notification.CallbackRouteUpsertRequest{
+		ProviderKey:       "dummy-sms",
+		ProviderAccountID: account.ProviderAccountID,
+		CallbackPath:      "/v1/providers/dummy-sms/callbacks",
+		VerificationMode:  notification.CallbackVerificationModeSharedSecret,
+		VerificationSecretRef: notification.SecretReference{
+			Ref:          "CALLBACK_PROVIDER_SECRET_DEMO",
+			MaterialType: notification.MaterialTypeSecretString,
+			Source:       "env",
+		},
+		Enabled: true,
+	})
+	createProviderBinding(t, client, notification.ProviderBindingUpsertRequest{
+		Channel:           notification.ChannelSMS,
+		BindingSet:        bindingSet,
+		ProviderAccountID: account.ProviderAccountID,
+		EndpointURL:       "http://connector-sms:8092",
+		Enabled:           true,
+		Priority:          100,
+	})
+
+	req := notification.NotificationRequest{
+		IdempotencyKey: uniqueKey("dummy-sms-webhook-request"),
+		EventName:      "otp.sent",
+		TemplateKey:    "dummy-sms-otp-webhook",
+		Channels:       []notification.Channel{notification.ChannelSMS},
+		BindingSet:     bindingSet,
+		Recipient: notification.Recipient{
+			UserID: "dummy-sms-webhook-user",
+			Phone:  "918700491033",
+		},
+		Variables: map[string]string{
+			"OTP": "123456",
+		},
+	}
+
+	accepted := postNotificationRequest(t, client, req)
+	_ = waitForTerminalRequest(t, client, accepted.RequestID, 20, 1*time.Second)
+
+	event := waitForCapturedWebhookEvent(t, webhookSink, 20, 1*time.Second, func(payload notification.LifecycleWebhookEvent) bool {
+		return payload.RequestID == accepted.RequestID && payload.Status == notification.RequestStatusDelivered
+	})
+	if event.RequestID != accepted.RequestID {
+		t.Fatalf("webhook request_id = %q, want %q", event.RequestID, accepted.RequestID)
+	}
+	if event.Status != notification.RequestStatusDelivered {
+		t.Fatalf("webhook status = %q, want %q", event.Status, notification.RequestStatusDelivered)
+	}
+	if event.EventType != "notification.request.updated" {
+		t.Fatalf("webhook event_type = %q, want %q", event.EventType, "notification.request.updated")
+	}
+}
+
+func TestCallbackGatewayRejectsWrongSecret(t *testing.T) {
+	client := requireIntegrationClient(t)
+	account := createDummySMSCallbackProviderAccount(t, client)
+
+	createCallbackRoute(t, client, notification.CallbackRouteUpsertRequest{
+		ProviderKey:       "dummy-sms",
+		ProviderAccountID: account.ProviderAccountID,
+		CallbackPath:      "/v1/providers/dummy-sms/callbacks",
+		VerificationMode:  notification.CallbackVerificationModeSharedSecret,
+		VerificationSecretRef: notification.SecretReference{
+			Ref:          "CALLBACK_PROVIDER_SECRET_DEMO",
+			MaterialType: notification.MaterialTypeSecretString,
+			Source:       "env",
+		},
+		Enabled: true,
+	})
+
+	status, body := postRawCallbackWithHeaders(t, client, client.callbackBaseURL, "dummy-sms", notification.ProviderCallback{
+		ProviderMessageID: "dummy-msg-1",
+		Status:            "delivered",
+	}, map[string]string{
+		"X-Provider-Secret": "wrong-secret",
+	})
+	if status != http.StatusUnauthorized {
+		t.Fatalf("wrong-secret status = %d, want %d, body=%s", status, http.StatusUnauthorized, string(body))
+	}
+}
+
+func TestCallbackGatewayRejectsMissingRoute(t *testing.T) {
+	client := requireIntegrationClient(t)
+
+	status, body := postRawCallbackWithHeaders(t, client, client.callbackBaseURL, "missing-provider", notification.ProviderCallback{
+		ProviderMessageID: "dummy-msg-2",
+		Status:            "delivered",
+	}, map[string]string{
+		"X-Provider-Secret": "anything",
+	})
+	if status != http.StatusNotFound {
+		t.Fatalf("missing-route status = %d, want %d, body=%s", status, http.StatusNotFound, string(body))
+	}
+}
+
+func TestCallbackGatewayRejectsDisabledRoute(t *testing.T) {
+	client := requireIntegrationClient(t)
+	account := createDummySMSCallbackProviderAccount(t, client)
+
+	createCallbackRoute(t, client, notification.CallbackRouteUpsertRequest{
+		ProviderKey:       "dummy-sms",
+		ProviderAccountID: account.ProviderAccountID,
+		CallbackPath:      "/v1/providers/dummy-sms/callbacks",
+		VerificationMode:  notification.CallbackVerificationModeSharedSecret,
+		VerificationSecretRef: notification.SecretReference{
+			Ref:          "CALLBACK_PROVIDER_SECRET_DEMO",
+			MaterialType: notification.MaterialTypeSecretString,
+			Source:       "env",
+		},
+		Enabled: false,
+	})
+
+	status, body := postRawCallbackWithHeaders(t, client, client.callbackBaseURL, "dummy-sms", notification.ProviderCallback{
+		ProviderMessageID: "dummy-msg-3",
+		Status:            "delivered",
+	}, map[string]string{
+		"X-Provider-Secret": "CALLBACK_PROVIDER_SECRET_DEMO",
+	})
+	if status != http.StatusNotFound {
+		t.Fatalf("disabled-route status = %d, want %d, body=%s", status, http.StatusNotFound, string(body))
+	}
+}
+
+func createDummySMSCallbackProviderAccount(t *testing.T, client *testClient) notification.ProviderAccount {
+	t.Helper()
+
+	return createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+		TenantID:    "communication-engine",
+		ProviderKey: "dummy-sms",
+		DisplayName: "Dummy SMS Callback Provider",
+		Channel:     notification.ChannelSMS,
+		Enabled:     true,
+		Config: map[string]string{
+			"base_url":     "http://dummy-sms-provider:8080",
+			"callback_url": client.callbackBaseURL + "/v1/providers/dummy-sms/callbacks",
+		},
+		SecretRefs: map[string]notification.SecretReference{
+			"callback_secret": {
+				Ref:          "CALLBACK_PROVIDER_SECRET_DEMO",
+				MaterialType: notification.MaterialTypeSecretString,
+				Source:       "env",
+			},
+		},
+	})
+}
+
 func TestWhatsAppProviderCallbacksUseRealPayloadShapes(t *testing.T) {
 	client := requireIntegrationClient(t)
 	capture := startHostCaptureServer(t)
@@ -508,6 +778,192 @@ func TestWhatsAppProviderCallbacksUseRealPayloadShapes(t *testing.T) {
 	})
 }
 
+func TestWhatsAppInboundRepliesAreStoredAndForwardedGupshup(t *testing.T) {
+	client := requireIntegrationClient(t)
+	webhookSink := startHostCaptureServer(t)
+
+	createWebhookSubscription(t, client, notification.WebhookSubscriptionUpsertRequest{
+		TargetURL: webhookSink.baseURL(t) + "/channel-events",
+		Enabled:   true,
+	})
+
+	account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+		TenantID:    "communication-engine",
+		ProviderKey: "gupshup-whatsapp",
+		DisplayName: "Gupshup WhatsApp Inbound Demo",
+		Channel:     notification.ChannelWhatsApp,
+		Enabled:     true,
+		Config: map[string]string{
+			"username": "demo-user",
+			"password": "demo-pass",
+			"version":  "1.1",
+			"base_url": webhookSink.baseURL(t),
+		},
+		SecretRefs: map[string]notification.SecretReference{
+			"password": {
+				Ref:          "WHATSAPP_GUPSHUP_PASSWORD_DEMO",
+				MaterialType: notification.MaterialTypeSecretString,
+				Source:       "env",
+			},
+		},
+	})
+	createCallbackRoute(t, client, notification.CallbackRouteUpsertRequest{
+		ProviderKey:       "gupshup-whatsapp",
+		ProviderAccountID: account.ProviderAccountID,
+		CallbackPath:      "/v1/providers/gupshup-whatsapp/callbacks",
+		VerificationMode:  notification.CallbackVerificationModeNone,
+		Enabled:           true,
+	})
+
+	payload := notification.GupshupWhatsAppInboundMessage{
+		App:       "demo-app",
+		Timestamp: time.Now().UnixMilli(),
+		Version:   2,
+		Type:      "message",
+		Payload: notification.GupshupWhatsAppInboundPayload{
+			ID:     "gupshup-inbound-1",
+			Source: "918700491033",
+			Type:   "text",
+			Payload: notification.GupshupWhatsAppInboundContent{
+				Text: "Yes, I want more details",
+			},
+			Sender: notification.GupshupWhatsAppInboundSender{
+				Phone:       "918700491033",
+				Name:        "Arun",
+				CountryCode: "91",
+				DialCode:    "91",
+			},
+			Context: &notification.GupshupWhatsAppInboundContext{
+				ID:   "wamid.original-outbound-123",
+				GsID: "gupshup-original-outbound-123",
+			},
+		},
+	}
+
+	status, body := postRawProviderCallbackJSON(t, client, "gupshup-whatsapp", payload)
+	if status != http.StatusAccepted {
+		t.Fatalf("gupshup inbound status = %d, want %d, body=%s", status, http.StatusAccepted, string(body))
+	}
+
+	events := waitForChannelEvents(t, client, "gupshup-whatsapp", notification.ChannelWhatsApp, 20, 1*time.Second, func(events []notification.ChannelEvent) bool {
+		return len(events) > 0 && events[0].EventType == "reply_received"
+	})
+	if got := events[0].Body; got != "Yes, I want more details" {
+		t.Fatalf("body = %q, want reply text", got)
+	}
+	if got := events[0].ReplyToMessageID; got == "" {
+		t.Fatal("expected reply_to_message_id to be populated")
+	}
+
+	captured := webhookSink.waitFor(t, 20, 1*time.Second)
+	var webhookEvent notification.ChannelWebhookEvent
+	if err := json.Unmarshal(captured.Body, &webhookEvent); err != nil {
+		t.Fatalf("decode channel webhook event: %v", err)
+	}
+	if webhookEvent.EventType != "notification.channel_event.received" {
+		t.Fatalf("webhook event_type = %q, want notification.channel_event.received", webhookEvent.EventType)
+	}
+	if webhookEvent.Event.EventType != "reply_received" {
+		t.Fatalf("webhook nested event_type = %q, want reply_received", webhookEvent.Event.EventType)
+	}
+}
+
+func TestWhatsAppInboundRepliesAreStoredAndForwardedKarix(t *testing.T) {
+	client := requireIntegrationClient(t)
+	webhookSink := startHostCaptureServer(t)
+
+	createWebhookSubscription(t, client, notification.WebhookSubscriptionUpsertRequest{
+		TargetURL: webhookSink.baseURL(t) + "/channel-events",
+		Enabled:   true,
+	})
+
+	account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+		TenantID:    "communication-engine",
+		ProviderKey: "karix-whatsapp",
+		DisplayName: "Karix WhatsApp Inbound Demo",
+		Channel:     notification.ChannelWhatsApp,
+		Enabled:     true,
+		Config: map[string]string{
+			"key":      "demo-karix-key",
+			"sender":   "917208898844",
+			"version":  "v1.0.9",
+			"base_url": webhookSink.baseURL(t),
+		},
+		SecretRefs: map[string]notification.SecretReference{
+			"key": {
+				Ref:          "WHATSAPP_KARIX_KEY_DEMO",
+				MaterialType: notification.MaterialTypeSecretString,
+				Source:       "env",
+			},
+		},
+	})
+	createCallbackRoute(t, client, notification.CallbackRouteUpsertRequest{
+		ProviderKey:       "karix-whatsapp",
+		ProviderAccountID: account.ProviderAccountID,
+		CallbackPath:      "/v1/providers/karix-whatsapp/callbacks",
+		VerificationMode:  notification.CallbackVerificationModeNone,
+		Enabled:           true,
+	})
+
+	payload := notification.MetaWhatsAppWebhookPayload{
+		Object: "whatsapp_business_account",
+		Entry: []notification.MetaWhatsAppWebhookEntry{
+			{
+				ID: "1234567890",
+				Changes: []notification.MetaWhatsAppWebhookChange{
+					{
+						Field: "messages",
+						Value: notification.MetaWhatsAppWebhookValue{
+							Messages: []notification.MetaWhatsAppMessage{
+								{
+									ID:        "wamid.meta.inbound-1",
+									From:      "918700491033",
+									Timestamp: fmt.Sprintf("%d", time.Now().Unix()),
+									Type:      "text",
+									Text: &notification.MetaWhatsAppMessageText{
+										Body: "I need help with my order",
+									},
+									Context: &notification.MetaWhatsAppMessageContext{
+										ID:   "wamid.original-outbound-meta-123",
+										From: "917208898844",
+									},
+								},
+							},
+							Contacts: []notification.MetaWhatsAppContact{
+								{
+									Profile: struct {
+										Name string `json:"name"`
+									}{Name: "Arun"},
+									WAID: "918700491033",
+								},
+							},
+							Metadata: notification.MetaWhatsAppMetadata{
+								DisplayPhoneNumber: "917208898844",
+								PhoneNumberID:      "phone-number-id-123",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	status, body := postRawProviderCallbackJSON(t, client, "karix-whatsapp", payload)
+	if status != http.StatusAccepted {
+		t.Fatalf("karix inbound status = %d, want %d, body=%s", status, http.StatusAccepted, string(body))
+	}
+
+	events := waitForChannelEvents(t, client, "karix-whatsapp", notification.ChannelWhatsApp, 20, 1*time.Second, func(events []notification.ChannelEvent) bool {
+		return len(events) > 0 && events[0].EventType == "reply_received"
+	})
+	if got := events[0].Body; got != "I need help with my order" {
+		t.Fatalf("body = %q, want reply text", got)
+	}
+	if got := events[0].FromAddress; got != "918700491033" {
+		t.Fatalf("from_address = %q, want 918700491033", got)
+	}
+}
+
 func TestManagedPushDeliveryAccepted(t *testing.T) {
 	client := requireIntegrationClient(t)
 
@@ -591,196 +1047,401 @@ func TestManagedPushDeliveryAccepted(t *testing.T) {
 	}
 }
 
-func TestManagedWhatsAppTemplateMetadataFlowsToConnector(t *testing.T) {
+func TestManagedWhatsAppMediaTemplatesUseRealProdMetadata(t *testing.T) {
 	client := requireIntegrationClient(t)
 	capture := startHostCaptureServer(t)
 
-	upsertTemplate(t, client, notification.TemplateUpsertRequest{
-		TemplateKey:  "test-template-pratik",
-		Channel:      notification.ChannelWhatsApp,
-		BodyTemplate: "Hi {{placeholder1}},\n\nHow are you. Welcome to nurture.",
-		Metadata: map[string]string{
-			"media_type":             "image",
-			"gupshup_template_name":  "test_template_pratik",
-			"karix_template_name":    "test_template_pratik_1",
-			"gupshup_template_id":    "387618",
-			"karix_template_id":      "318391747228607",
-			"interactive_attributes": `{"button_category":"CallToAction","buttons":[{"type":"url","urlType":"static","url":"https://nrf.page.link/paHospicash","text":"Claim Offer"}]}`,
-		},
-		Enabled: true,
-	})
+	type whatsappMediaCase struct {
+		name           string
+		providerKey    string
+		templateKey    string
+		languageCode   string
+		mediaType      string
+		templateID     string
+		templateName   string
+		mediaURL       string
+		fileName       string
+		source         string
+		sender         string
+		providerConfig map[string]string
+		assertPayload  func(t *testing.T, captured capturedProviderRequest, req notification.NotificationRequest)
+	}
 
-	eventName := uniqueKey("it-whatsapp-template")
-	bindingSet := uniqueKey("it-whatsapp-binding-set")
-	upsertRoutingPolicy(t, client, notification.RoutingPolicyUpsertRequest{
-		EventName:  eventName,
-		Channels:   []notification.Channel{notification.ChannelWhatsApp},
-		BindingSet: bindingSet,
-		Enabled:    true,
-		Priority:   100,
-	})
-
-	t.Run("gupshup", func(t *testing.T) {
-		reqURL := capture.baseURL(t)
-		account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
-			TenantID:    "communication-engine",
-			ProviderKey: "gupshup-whatsapp",
-			DisplayName: "Gupshup WhatsApp Template Test",
-			Channel:     notification.ChannelWhatsApp,
-			Enabled:     true,
-			Config: map[string]string{
+	cases := []whatsappMediaCase{
+		{
+			name:         "gupshup-image",
+			providerKey:  "gupshup-whatsapp",
+			templateKey:  "prod-wp-jackpot-image-en",
+			languageCode: "en",
+			mediaType:    "image",
+			templateID:   "866284",
+			templateName: "wp_aug27_jackpot_2_eng",
+			mediaURL:     "https://www.gstatic.com/webp/gallery3/2.png",
+			source:       "demo-user",
+			providerConfig: map[string]string{
 				"username": "demo-user",
 				"password": "demo-pass",
 				"version":  "1.1",
-				"base_url": reqURL,
+				"base_url": capture.baseURL(t),
 			},
-			SecretRefs: map[string]notification.SecretReference{
-				"password": {
-					Ref:          "WHATSAPP_GUPSHUP_PASSWORD_DEMO",
-					MaterialType: notification.MaterialTypeSecretString,
-					Source:       "env",
-				},
+			assertPayload: func(t *testing.T, captured capturedProviderRequest, req notification.NotificationRequest) {
+				t.Helper()
+				form, err := url.ParseQuery(string(captured.Body))
+				if err != nil {
+					t.Fatalf("parse gupshup body: %v", err)
+				}
+				if captured.Path != "/wa/api/v1/template/msg" {
+					t.Fatalf("path = %q, want /wa/api/v1/template/msg", captured.Path)
+				}
+				if got := form.Get("source"); got != "demo-user" {
+					t.Fatalf("source = %q, want demo-user", got)
+				}
+				if got := form.Get("destination"); got != "918700491033" {
+					t.Fatalf("destination = %q, want 918700491033", got)
+				}
+				var templatePayload map[string]any
+				if err := json.Unmarshal([]byte(form.Get("template")), &templatePayload); err != nil {
+					t.Fatalf("decode gupshup template payload: %v", err)
+				}
+				if got, _ := templatePayload["id"].(string); got != "866284" {
+					t.Fatalf("template.id = %q, want 866284", got)
+				}
+				messagePayload := mustDecodeMap(t, form.Get("message"))
+				if got, _ := messagePayload["type"].(string); got != "image" {
+					t.Fatalf("message.type = %q, want image", got)
+				}
+				image, ok := messagePayload["image"].(map[string]any)
+				if !ok {
+					t.Fatalf("message.image missing: %#v", messagePayload)
+				}
+				if got, _ := image["link"].(string); got != req.Metadata["media_url"] {
+					t.Fatalf("message.image.link = %q, want %q", got, req.Metadata["media_url"])
+				}
 			},
-		})
-		createProviderBinding(t, client, notification.ProviderBindingUpsertRequest{
-			Channel:           notification.ChannelWhatsApp,
-			BindingSet:        bindingSet,
-			ProviderAccountID: account.ProviderAccountID,
-			EndpointURL:       "http://connector-whatsapp:8095",
-			Enabled:           true,
-			Priority:          100,
-		})
-
-		req := notification.NotificationRequest{
-			IdempotencyKey: uniqueKey("it-whatsapp-gupshup"),
-			EventName:      eventName,
-			TemplateKey:    "test-template-pratik",
-			Channels:       []notification.Channel{notification.ChannelWhatsApp},
-			BindingSet:     bindingSet,
-			Recipient: notification.Recipient{
-				UserID: "it-user-whatsapp-gupshup",
-				Phone:  "918700491033",
+		},
+		{
+			name:         "gupshup-video",
+			providerKey:  "gupshup-whatsapp",
+			templateKey:  "prod-wp-jackpot-video-hi",
+			languageCode: "hi-in",
+			mediaType:    "video",
+			templateID:   "865515",
+			templateName: "wp_aug26_jackpot_hindi",
+			mediaURL:     "https://www.w3schools.com/html/mov_bbb.mp4",
+			source:       "demo-user",
+			providerConfig: map[string]string{
+				"username": "demo-user",
+				"password": "demo-pass",
+				"version":  "1.1",
+				"base_url": capture.baseURL(t),
 			},
-			Variables: map[string]string{
-				"placeholder1": "Pratik",
+			assertPayload: func(t *testing.T, captured capturedProviderRequest, req notification.NotificationRequest) {
+				t.Helper()
+				form, err := url.ParseQuery(string(captured.Body))
+				if err != nil {
+					t.Fatalf("parse gupshup body: %v", err)
+				}
+				var templatePayload map[string]any
+				if err := json.Unmarshal([]byte(form.Get("template")), &templatePayload); err != nil {
+					t.Fatalf("decode gupshup template payload: %v", err)
+				}
+				if got, _ := templatePayload["id"].(string); got != "865515" {
+					t.Fatalf("template.id = %q, want 865515", got)
+				}
+				messagePayload := mustDecodeMap(t, form.Get("message"))
+				if got, _ := messagePayload["type"].(string); got != "video" {
+					t.Fatalf("message.type = %q, want video", got)
+				}
+				video, ok := messagePayload["video"].(map[string]any)
+				if !ok {
+					t.Fatalf("message.video missing: %#v", messagePayload)
+				}
+				if got, _ := video["link"].(string); got != req.Metadata["media_url"] {
+					t.Fatalf("message.video.link = %q, want %q", got, req.Metadata["media_url"])
+				}
 			},
-		}
-
-		accepted := postNotificationRequest(t, client, req)
-		details := waitForTerminalRequest(t, client, accepted.RequestID, 20, 1*time.Second)
-		if details.Request.Status != notification.RequestStatusDispatched {
-			t.Fatalf("request status = %q, want %q", details.Request.Status, notification.RequestStatusDispatched)
-		}
-
-		captured := capture.waitFor(t, 20, 1*time.Second)
-		form, err := url.ParseQuery(string(captured.Body))
-		if err != nil {
-			t.Fatalf("parse gupshup body: %v", err)
-		}
-		if got := form.Get("method"); got != "SendMediaMessage" {
-			t.Fatalf("method = %q, want SendMediaMessage", got)
-		}
-		if got := form.Get("isTemplate"); got != "" {
-			t.Fatalf("isTemplate = %q, want empty for non-interactive media payload", got)
-		}
-		if got := form.Get("media_url"); got != "https://www.gstatic.com/webp/gallery3/2.png" {
-			t.Fatalf("media_url = %q, want media url from metadata", got)
-		}
-		if got := form.Get("format"); got != "" {
-			t.Fatalf("format = %q, want empty for media payload", got)
-		}
-		if got := form.Get("channel"); got != "" {
-			t.Fatalf("channel = %q, want empty to match CE gupshup payload", got)
-		}
-		if got := form.Get("caption"); !strings.Contains(got, "Hi Pratik") {
-			t.Fatalf("caption = %q, want rendered body", got)
-		}
-	})
-
-	t.Run("karix", func(t *testing.T) {
-		reqURL := capture.baseURL(t)
-		account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
-			TenantID:    "communication-engine",
-			ProviderKey: "karix-whatsapp",
-			DisplayName: "Karix WhatsApp Template Test",
-			Channel:     notification.ChannelWhatsApp,
-			Enabled:     true,
-			Config: map[string]string{
+		},
+		{
+			name:         "gupshup-document",
+			providerKey:  "gupshup-whatsapp",
+			templateKey:  "prod-pa-policy-confirmed-en",
+			languageCode: "en",
+			mediaType:    "document",
+			templateID:   "244982",
+			templateName: "pa_policy_confirmed",
+			mediaURL:     "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+			fileName:     "policy.pdf",
+			source:       "demo-user",
+			providerConfig: map[string]string{
+				"username": "demo-user",
+				"password": "demo-pass",
+				"version":  "1.1",
+				"base_url": capture.baseURL(t),
+			},
+			assertPayload: func(t *testing.T, captured capturedProviderRequest, req notification.NotificationRequest) {
+				t.Helper()
+				form, err := url.ParseQuery(string(captured.Body))
+				if err != nil {
+					t.Fatalf("parse gupshup body: %v", err)
+				}
+				var templatePayload map[string]any
+				if err := json.Unmarshal([]byte(form.Get("template")), &templatePayload); err != nil {
+					t.Fatalf("decode gupshup template payload: %v", err)
+				}
+				if got, _ := templatePayload["id"].(string); got != "244982" {
+					t.Fatalf("template.id = %q, want 244982", got)
+				}
+				messagePayload := mustDecodeMap(t, form.Get("message"))
+				if got, _ := messagePayload["type"].(string); got != "document" {
+					t.Fatalf("message.type = %q, want document", got)
+				}
+				document, ok := messagePayload["document"].(map[string]any)
+				if !ok {
+					t.Fatalf("message.document missing: %#v", messagePayload)
+				}
+				if got, _ := document["link"].(string); got != req.Metadata["media_url"] {
+					t.Fatalf("message.document.link = %q, want %q", got, req.Metadata["media_url"])
+				}
+				if got, _ := document["filename"].(string); got != req.Metadata["media_file_name"] {
+					t.Fatalf("message.document.filename = %q, want %q", got, req.Metadata["media_file_name"])
+				}
+			},
+		},
+		{
+			name:         "karix-image",
+			providerKey:  "karix-whatsapp",
+			templateKey:  "prod-test-template-pratik-image-en",
+			languageCode: "en",
+			mediaType:    "image",
+			templateID:   "318391747228607",
+			templateName: "test_template_pratik_1",
+			mediaURL:     "https://www.gstatic.com/webp/gallery3/2.png",
+			sender:       "917208898844",
+			providerConfig: map[string]string{
 				"key":           "demo-karix-key",
 				"sender":        "917208898844",
 				"version":       "v1.0.9",
-				"base_url":      reqURL,
+				"base_url":      capture.baseURL(t),
 				"template_name": "test_template_pratik_1",
 			},
-			SecretRefs: map[string]notification.SecretReference{
-				"key": {
-					Ref:          "WHATSAPP_KARIX_KEY_DEMO",
-					MaterialType: notification.MaterialTypeSecretString,
-					Source:       "env",
+			assertPayload: func(t *testing.T, captured capturedProviderRequest, req notification.NotificationRequest) {
+				t.Helper()
+				var payload map[string]any
+				if err := json.Unmarshal(captured.Body, &payload); err != nil {
+					t.Fatalf("parse karix body: %v", err)
+				}
+				assertKarixMediaTemplate(t, payload, "318391747228607", "image", req.Metadata["media_url"], "")
+			},
+		},
+		{
+			name:         "karix-video",
+			providerKey:  "karix-whatsapp",
+			templateKey:  "prod-test-pratik-video-hi",
+			languageCode: "hi-in",
+			mediaType:    "video",
+			templateID:   "6543708449009010",
+			templateName: "test_pratik_2",
+			mediaURL:     "https://www.w3schools.com/html/mov_bbb.mp4",
+			sender:       "917208898844",
+			providerConfig: map[string]string{
+				"key":           "demo-karix-key",
+				"sender":        "917208898844",
+				"version":       "v1.0.9",
+				"base_url":      capture.baseURL(t),
+				"template_name": "test_pratik_2",
+			},
+			assertPayload: func(t *testing.T, captured capturedProviderRequest, req notification.NotificationRequest) {
+				t.Helper()
+				var payload map[string]any
+				if err := json.Unmarshal(captured.Body, &payload); err != nil {
+					t.Fatalf("parse karix body: %v", err)
+				}
+				assertKarixMediaTemplate(t, payload, "6543708449009010", "video", req.Metadata["media_url"], "")
+			},
+		},
+		{
+			name:         "karix-document",
+			providerKey:  "karix-whatsapp",
+			templateKey:  "prod-pa-policy-confirmed-doc-en",
+			languageCode: "en",
+			mediaType:    "document",
+			templateID:   "1537984726705595",
+			templateName: "pa_policy_confirmed_1",
+			mediaURL:     "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+			fileName:     "policy.pdf",
+			sender:       "917208898844",
+			providerConfig: map[string]string{
+				"key":           "demo-karix-key",
+				"sender":        "917208898844",
+				"version":       "v1.0.9",
+				"base_url":      capture.baseURL(t),
+				"template_name": "pa_policy_confirmed_1",
+			},
+			assertPayload: func(t *testing.T, captured capturedProviderRequest, req notification.NotificationRequest) {
+				t.Helper()
+				var payload map[string]any
+				if err := json.Unmarshal(captured.Body, &payload); err != nil {
+					t.Fatalf("parse karix body: %v", err)
+				}
+				assertKarixMediaTemplate(t, payload, "1537984726705595", "document", req.Metadata["media_url"], req.Metadata["media_file_name"])
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			eventName := uniqueKey("it-whatsapp-template-" + tc.name)
+			bindingSet := uniqueKey("it-whatsapp-binding-set-" + tc.name)
+
+			upsertTemplate(t, client, notification.TemplateUpsertRequest{
+				TemplateKey:  tc.templateKey,
+				Channel:      notification.ChannelWhatsApp,
+				LanguageCode: tc.languageCode,
+				BodyTemplate: "Media template for {{placeholder1}}",
+				Metadata: map[string]string{
+					"media_type":             tc.mediaType,
+					"gupshup_template_name":  firstNonEmpty(tc.providerConfig["gupshup_template_name"], tc.templateName),
+					"gupshup_template_id":    firstNonEmpty(tc.providerConfig["gupshup_template_id"], tc.templateID),
+					"karix_template_name":    tc.templateName,
+					"karix_template_id":      tc.templateID,
+					"interactive_attributes": `{"button_category":"CallToAction","buttons":[{"type":"url","urlType":"static","url":"https://nrf.page.link/paHospicash","text":"Claim Offer"}]}`,
 				},
-			},
+				Enabled: true,
+			})
+
+			upsertRoutingPolicy(t, client, notification.RoutingPolicyUpsertRequest{
+				EventName:  eventName,
+				Channels:   []notification.Channel{notification.ChannelWhatsApp},
+				BindingSet: bindingSet,
+				Enabled:    true,
+				Priority:   100,
+			})
+
+			account := createProviderAccount(t, client, notification.ProviderAccountUpsertRequest{
+				TenantID:    "communication-engine",
+				ProviderKey: tc.providerKey,
+				DisplayName: tc.name,
+				Channel:     notification.ChannelWhatsApp,
+				Enabled:     true,
+				Config:      tc.providerConfig,
+				SecretRefs: map[string]notification.SecretReference{
+					func() string {
+						if tc.providerKey == "gupshup-whatsapp" {
+							return "password"
+						}
+						return "key"
+					}(): {
+						Ref:          "WHATSAPP_PROVIDER_SECRET_DEMO",
+						MaterialType: notification.MaterialTypeSecretString,
+						Source:       "env",
+					},
+				},
+			})
+			createProviderBinding(t, client, notification.ProviderBindingUpsertRequest{
+				Channel:           notification.ChannelWhatsApp,
+				BindingSet:        bindingSet,
+				ProviderAccountID: account.ProviderAccountID,
+				EndpointURL:       "http://connector-whatsapp:8095",
+				Enabled:           true,
+				Priority:          100,
+			})
+
+			metadata := map[string]string{
+				"media_type":            tc.mediaType,
+				"media_url":             tc.mediaURL,
+				"gupshup_template_name": firstNonEmpty(tc.providerConfig["gupshup_template_name"], tc.templateName),
+				"gupshup_template_id":   firstNonEmpty(tc.providerConfig["gupshup_template_id"], tc.templateID),
+				"karix_template_name":   tc.templateName,
+				"karix_template_id":     tc.templateID,
+			}
+			if tc.fileName != "" {
+				metadata["media_file_name"] = tc.fileName
+			}
+
+			req := notification.NotificationRequest{
+				IdempotencyKey: uniqueKey("it-whatsapp-" + tc.name),
+				EventName:      eventName,
+				TemplateKey:    tc.templateKey,
+				LanguageCode:   tc.languageCode,
+				Channels:       []notification.Channel{notification.ChannelWhatsApp},
+				BindingSet:     bindingSet,
+				Recipient: notification.Recipient{
+					UserID: "it-user-" + tc.name,
+					Phone:  "918700491033",
+				},
+				Variables: map[string]string{
+					"placeholder1": "Pratik",
+				},
+				Metadata: metadata,
+			}
+
+			accepted := postNotificationRequest(t, client, req)
+			details := waitForTerminalRequest(t, client, accepted.RequestID, 20, 1*time.Second)
+			if details.Request.Status != notification.RequestStatusDispatched {
+				t.Fatalf("request status = %q, want %q", details.Request.Status, notification.RequestStatusDispatched)
+			}
+
+			captured := capture.waitFor(t, 20, 1*time.Second)
+			tc.assertPayload(t, captured, req)
 		})
-		createProviderBinding(t, client, notification.ProviderBindingUpsertRequest{
-			Channel:           notification.ChannelWhatsApp,
-			BindingSet:        bindingSet,
-			ProviderAccountID: account.ProviderAccountID,
-			EndpointURL:       "http://connector-whatsapp:8095",
-			Enabled:           true,
-			Priority:          100,
-		})
+	}
+}
 
-		req := notification.NotificationRequest{
-			IdempotencyKey: uniqueKey("it-whatsapp-karix"),
-			EventName:      eventName,
-			TemplateKey:    "test-template-pratik",
-			Channels:       []notification.Channel{notification.ChannelWhatsApp},
-			BindingSet:     bindingSet,
-			Recipient: notification.Recipient{
-				UserID: "it-user-whatsapp-karix",
-				Phone:  "918700491033",
-			},
-			Variables: map[string]string{
-				"placeholder1": "Pratik",
-			},
-		}
+func mustDecodeMap(t *testing.T, raw string) map[string]any {
+	t.Helper()
 
-		accepted := postNotificationRequest(t, client, req)
-		details := waitForTerminalRequest(t, client, accepted.RequestID, 20, 1*time.Second)
-		if details.Request.Status != notification.RequestStatusDispatched {
-			t.Fatalf("request status = %q, want %q", details.Request.Status, notification.RequestStatusDispatched)
-		}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatalf("decode json payload: %v", err)
+	}
+	return payload
+}
 
-		captured := capture.waitFor(t, 20, 1*time.Second)
-		var payload map[string]any
-		if err := json.Unmarshal(captured.Body, &payload); err != nil {
-			t.Fatalf("parse karix body: %v", err)
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
 		}
-		message, ok := payload["message"].(map[string]any)
-		if !ok {
-			t.Fatalf("message missing in payload: %#v", payload)
+	}
+	return ""
+}
+
+func assertKarixMediaTemplate(t *testing.T, payload map[string]any, templateID, mediaType, mediaURL, fileName string) {
+	t.Helper()
+
+	message, ok := payload["message"].(map[string]any)
+	if !ok {
+		t.Fatalf("message missing in payload: %#v", payload)
+	}
+	content, ok := message["content"].(map[string]any)
+	if !ok {
+		t.Fatalf("content missing in payload: %#v", payload)
+	}
+	if got, _ := content["type"].(string); got != "MEDIA_TEMPLATE" {
+		t.Fatalf("content.type = %q, want MEDIA_TEMPLATE", got)
+	}
+	mediaTemplate, ok := content["mediaTemplate"].(map[string]any)
+	if !ok {
+		t.Fatalf("mediaTemplate missing in payload: %#v", payload)
+	}
+	if got, _ := mediaTemplate["templateId"].(string); got != templateID {
+		t.Fatalf("templateId = %q, want %s", got, templateID)
+	}
+	media, ok := mediaTemplate["media"].(map[string]any)
+	if !ok {
+		t.Fatalf("media missing in payload: %#v", payload)
+	}
+	if got, _ := media["type"].(string); got != mediaType {
+		t.Fatalf("media.type = %q, want %s", got, mediaType)
+	}
+	if got, _ := media["url"].(string); got != mediaURL {
+		t.Fatalf("media.url = %q, want %q", got, mediaURL)
+	}
+	if fileName != "" {
+		if got, _ := media["fileName"].(string); got != fileName {
+			t.Fatalf("media.fileName = %q, want %q", got, fileName)
 		}
-		content, ok := message["content"].(map[string]any)
-		if !ok {
-			t.Fatalf("content missing in payload: %#v", payload)
-		}
-		if got, _ := content["type"].(string); got != "MEDIA_TEMPLATE" {
-			t.Fatalf("content.type = %q, want MEDIA_TEMPLATE", got)
-		}
-		mediaTemplate, ok := content["mediaTemplate"].(map[string]any)
-		if !ok {
-			t.Fatalf("mediaTemplate missing in payload: %#v", payload)
-		}
-		if got, _ := mediaTemplate["templateId"].(string); got != "test_template_pratik_1" {
-			t.Fatalf("templateId = %q, want test_template_pratik_1", got)
-		}
-		bodyParams, ok := mediaTemplate["bodyParameterValues"].(map[string]any)
-		if !ok {
-			t.Fatalf("bodyParameterValues missing in payload: %#v", payload)
-		}
-		if got, _ := bodyParams["placeholder1"].(string); got != "Pratik" {
-			t.Fatalf("placeholder1 = %q, want Pratik", got)
-		}
-	})
+	}
 }
 
 func TestBindingSetFailoverAcceptsOnBackupConnector(t *testing.T) {
@@ -1351,6 +2012,58 @@ type hostCaptureServer struct {
 	reqCh chan capturedProviderRequest
 }
 
+func createWebhookSubscription(t *testing.T, client *testClient, req notification.WebhookSubscriptionUpsertRequest) notification.WebhookSubscription {
+	t.Helper()
+
+	status, body := client.mustJSON(t, http.MethodPost, "/v1/webhook-subscriptions", req)
+	if status != http.StatusOK {
+		t.Fatalf("create webhook subscription status = %d, want %d, body=%s", status, http.StatusOK, string(body))
+	}
+
+	var subscription notification.WebhookSubscription
+	if err := json.Unmarshal(body, &subscription); err != nil {
+		t.Fatalf("decode webhook subscription response: %v", err)
+	}
+	return subscription
+}
+
+func getChannelEvents(t *testing.T, client *testClient, providerKey string, channel notification.Channel, limit int) []notification.ChannelEvent {
+	t.Helper()
+
+	path := "/v1/channel-events?provider_key=" + url.QueryEscape(providerKey)
+	if channel != "" {
+		path += "&channel=" + url.QueryEscape(string(channel))
+	}
+	if limit > 0 {
+		path += "&limit=" + url.QueryEscape(fmt.Sprintf("%d", limit))
+	}
+	status, body := client.mustRequest(t, http.MethodGet, path, nil)
+	if status != http.StatusOK {
+		t.Fatalf("get channel events status = %d, want %d, body=%s", status, http.StatusOK, string(body))
+	}
+
+	var response channelEventsResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode channel events response: %v", err)
+	}
+	return response.ChannelEvents
+}
+
+func waitForChannelEvents(t *testing.T, client *testClient, providerKey string, channel notification.Channel, attempts int, interval time.Duration, ready func([]notification.ChannelEvent) bool) []notification.ChannelEvent {
+	t.Helper()
+
+	var last []notification.ChannelEvent
+	for i := 0; i < attempts; i++ {
+		last = getChannelEvents(t, client, providerKey, channel, 20)
+		if ready(last) {
+			return last
+		}
+		time.Sleep(interval)
+	}
+	t.Fatalf("timed out waiting for channel events, last_count=%d", len(last))
+	return nil
+}
+
 func startHostCaptureServer(t *testing.T) *hostCaptureServer {
 	t.Helper()
 
@@ -1384,6 +2097,99 @@ func startHostCaptureServer(t *testing.T) *hostCaptureServer {
 	return capture
 }
 
+type dummySMSProviderRequest struct {
+	Destination    string            `json:"destination"`
+	Message        string            `json:"message"`
+	CallbackURL    string            `json:"callback_url"`
+	CallbackSecret string            `json:"callback_secret"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
+}
+
+type dummySMSProviderServer struct {
+	url     string
+	mu      sync.Mutex
+	records []dummySMSProviderRequest
+}
+
+func startDummySMSProviderServer(t *testing.T) *dummySMSProviderServer {
+	t.Helper()
+
+	listener, err := net.Listen("tcp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("start dummy sms provider listener: %v", err)
+	}
+	server := &http.Server{}
+	dummy := &dummySMSProviderServer{
+		url: fmt.Sprintf("http://host.docker.internal:%d", listener.Addr().(*net.TCPAddr).Port),
+	}
+	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		if r.URL.Path != "/send" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var payload dummySMSProviderRequest
+		if err := json.Unmarshal(body, &payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		dummy.mu.Lock()
+		dummy.records = append(dummy.records, payload)
+		dummy.mu.Unlock()
+
+		messageID := "dummy-" + uniqueKey("msg")
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			callbackBody, _ := json.Marshal(notification.ProviderCallback{
+				ProviderMessageID: messageID,
+				Status:            "delivered",
+			})
+			req, err := http.NewRequest(http.MethodPost, payload.CallbackURL, bytes.NewReader(callbackBody))
+			if err != nil {
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Provider-Secret", payload.CallbackSecret)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return
+			}
+			_, _ = ioReadAll(resp)
+			_ = resp.Body.Close()
+		}()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Provider-Message-ID", messageID)
+		_ = json.NewEncoder(w).Encode(dummySMSProviderResponse{MessageID: messageID, Status: "accepted"})
+	})
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		_ = server.Close()
+	})
+	return dummy
+}
+
+type dummySMSProviderResponse struct {
+	MessageID string `json:"message_id"`
+	Status    string `json:"status,omitempty"`
+}
+
+func (d *dummySMSProviderServer) baseURL(t *testing.T) string {
+	t.Helper()
+	return d.url
+}
+
+func (d *dummySMSProviderServer) requests() []dummySMSProviderRequest {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]dummySMSProviderRequest, len(d.records))
+	copy(out, d.records)
+	return out
+}
+
 func (c *hostCaptureServer) baseURL(t *testing.T) string {
 	t.Helper()
 	return c.url
@@ -1399,6 +2205,25 @@ func (c *hostCaptureServer) waitFor(t *testing.T, attempts int, delay time.Durat
 		t.Fatalf("timed out waiting for captured provider request")
 	}
 	return capturedProviderRequest{}
+}
+
+func waitForCapturedWebhookEvent(t *testing.T, capture *hostCaptureServer, attempts int, delay time.Duration, ready func(notification.LifecycleWebhookEvent) bool) notification.LifecycleWebhookEvent {
+	t.Helper()
+
+	var last notification.LifecycleWebhookEvent
+	for i := 0; i < attempts; i++ {
+		req := capture.waitFor(t, 1, delay)
+		var event notification.LifecycleWebhookEvent
+		if err := json.Unmarshal(req.Body, &event); err != nil {
+			t.Fatalf("decode lifecycle webhook event: %v", err)
+		}
+		last = event
+		if ready(event) {
+			return event
+		}
+	}
+	t.Fatalf("timed out waiting for matching lifecycle webhook event, last status=%q", last.Status)
+	return notification.LifecycleWebhookEvent{}
 }
 
 func hasProviderDefinition(definitions []notification.ProviderDefinition, providerKey string) bool {
@@ -1535,6 +2360,35 @@ func postRawProviderCallback[T any](t *testing.T, client *testClient, provider s
 		t.Fatalf("build provider callback request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.client.Do(req)
+	if err != nil {
+		t.Fatalf("perform provider callback request: %v", err)
+	}
+	defer resp.Body.Close()
+	responseBody, err := ioReadAll(resp)
+	if err != nil {
+		t.Fatalf("read provider callback response: %v", err)
+	}
+	return resp.StatusCode, responseBody
+}
+
+func postRawCallbackWithHeaders(t *testing.T, client *testClient, callbackBaseURL string, provider string, payload any, headers map[string]string) (int, []byte) {
+	t.Helper()
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal provider callback payload: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, callbackBaseURL+"/v1/providers/"+provider+"/callbacks", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build provider callback request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 
 	resp, err := client.client.Do(req)
 	if err != nil {

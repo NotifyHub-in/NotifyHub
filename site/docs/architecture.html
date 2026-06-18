@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="NotifyHub architecture overview." />
+    <title>Architecture | NotifyHub</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="site-shell docs-page">
+      <header class="site-header">
+        <div class="header-inner">
+          <a class="brand" href="/">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-title">
+              <strong>NotifyHub</strong>
+              <span>Architecture</span>
+            </span>
+          </a>
+          <button class="mobile-toggle" type="button" data-mobile-toggle aria-expanded="false" aria-controls="site-nav">
+            Menu
+          </button>
+          <nav class="nav" id="site-nav" data-nav>
+            <a href="/docs/">Docs</a>
+            <a href="/docs/getting-started.html">Getting started</a>
+            <a href="/docs/architecture.html" aria-current="page">Architecture</a>
+            <a href="/docs/channels.html">Channels</a>
+            <a href="/docs/deployment.html">Deployment</a>
+          </nav>
+        </div>
+      </header>
+      <main>
+        <section class="page-hero">
+          <div class="page-inner">
+            <div class="surface">
+              <div class="breadcrumbs">
+                <a href="/">Home</a>
+                <span>·</span>
+                <a href="/docs/">Docs</a>
+                <span>·</span>
+                <span>Architecture</span>
+              </div>
+              <h1>Built like a control plane, not a handoff script.</h1>
+              <p class="lede">Requests enter once, get normalized, and move through policy, templates, routing, dispatch, callbacks, and observability.</p>
+            </div>
+          </div>
+        </section>
+        <section class="section">
+          <div class="page-inner">
+            <div class="docs-grid">
+              <article class="docs-card surface">
+                <span class="eyebrow-inline">Ingress</span>
+                <h3>API + Kafka</h3>
+                <p>The API validates and persists requests, then hands delivery orchestration to the worker through Kafka.</p>
+              </article>
+              <article class="docs-card surface">
+                <span class="eyebrow-inline">Execution</span>
+                <h3>Worker + Connectors</h3>
+                <p>The worker resolves templates, preferences, and bindings before dispatching through the relevant connector.</p>
+              </article>
+              <article class="docs-card surface">
+                <span class="eyebrow-inline">Return path</span>
+                <h3>Callbacks</h3>
+                <p>Provider delivery updates and inbound replies come back through the callback gateway and become durable events.</p>
+              </article>
+              <article class="docs-card surface">
+                <span class="eyebrow-inline">Operations</span>
+                <h3>Metrics and logs</h3>
+                <p>Prometheus, Grafana, Kafka UI, and Adminer sit beside the runtime so teams can debug with real signals.</p>
+              </article>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

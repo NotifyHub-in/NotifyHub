@@ -1,13 +1,13 @@
 # System Architecture Dock
 
-This page is the big-picture map of the notification control plane: what runs where, how requests move through it, and which parts own each stage of the delivery lifecycle.
+This page is the big-picture map of the NotifyHub: what runs where, how requests move through it, and which parts own each stage of the delivery lifecycle.
 
 For deeper reading, see:
 
-- [Current Runtime Architecture](/Users/Shaik/notifications/notification-control-plane/docs/architecture/v1.md)
-- [Managed Provider Platform Design](/Users/Shaik/notifications/notification-control-plane/docs/architecture/managed-provider-platform.md)
-- [Connector Integration Guide](/Users/Shaik/notifications/notification-control-plane/docs/connector-sdk.md)
-- [communication-engine Multi-Channel Integration](/Users/Shaik/notifications/notification-control-plane/docs/integrations/communication-engine-multi-channel.md)
+- [Current Runtime Architecture](/docs/architecture/v1.md)
+- [Managed Provider Platform Design](/docs/architecture/managed-provider-platform.md)
+- [Connector Integration Guide](/docs/connector-sdk.md)
+- [Upstream Service Multi-Channel Integration](/docs/integrations/upstream-service-multi-channel.md)
 
 ## The Short Version
 
@@ -265,7 +265,7 @@ The boundary stays deliberately narrow:
 
 ## Where To Go Next
 
-- Use [API / Ingress Note](/Users/Shaik/notifications/notification-control-plane/docs/architecture/api-ingress.md) for the request entry path.
-- Use [Worker / Reconciliation Note](/Users/Shaik/notifications/notification-control-plane/docs/architecture/worker-reconciliation.md) for the delivery loop.
-- Use [Callback Gateway Note](/Users/Shaik/notifications/notification-control-plane/docs/architecture/callback-gateway.md) for the return path.
-- Use [Connectors / Libraries / Deployment Note](/Users/Shaik/notifications/notification-control-plane/docs/architecture/scoped-connectors-libs-deployment.md) for platform wiring and stack placement.
+- Use [API / Ingress Note](/docs/architecture/api-ingress.md) for the request entry path.
+- Use [Worker / Reconciliation Note](/docs/architecture/worker-reconciliation.md) for the delivery loop.
+- Use [Callback Gateway Note](/docs/architecture/callback-gateway.md) for the return path.
+- Use [Connectors / Libraries / Deployment Note](/docs/architecture/scoped-connectors-libs-deployment.md) for platform wiring and stack placement.

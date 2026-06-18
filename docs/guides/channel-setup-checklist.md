@@ -85,7 +85,7 @@ Do not commit real provider secrets to Git or paste them into docs.
 
 - Email delivery is usually acceptance-only unless your provider supports event webhooks.
 - If you use SendGrid, configure its event webhook separately.
-- If you add SendGrid callbacks, follow [Callbacks And Delivery Tracking](/Users/Shaik/notifications/notification-control-plane/docs/guides/callbacks-and-delivery-tracking.md) and create a matching callback route.
+- If you add SendGrid callbacks, follow [Callbacks And Delivery Tracking](/docs/guides/callbacks-and-delivery-tracking.md) and create a matching callback route.
 - If the provider verifies callbacks, store the verification secret as a file-backed secret reference and mount it in the callback gateway.
 
 ## SMS
@@ -111,7 +111,7 @@ Do not commit real provider secrets to Git or paste them into docs.
 - For Gupshup SMS, the control plane should send Unicode flags for non-English content.
 - Use `language_code` to choose the template variant.
 - Keep the template body and provider template name aligned.
-- If the provider supports SMS delivery receipts, configure the callback URL and secret using [Callbacks And Delivery Tracking](/Users/Shaik/notifications/notification-control-plane/docs/guides/callbacks-and-delivery-tracking.md).
+- If the provider supports SMS delivery receipts, configure the callback URL and secret using [Callbacks And Delivery Tracking](/docs/guides/callbacks-and-delivery-tracking.md).
 - Store the callback verification secret as a mounted file secret rather than in the template or request payload.
 
 ## WhatsApp
@@ -239,4 +239,4 @@ If a channel does not work:
 
 ## Next Step
 
-After the channel checklist is complete, use [Send Notifications](/Users/Shaik/notifications/notification-control-plane/docs/guides/send-notifications.md) to exercise the canonical API flow.
+After the channel checklist is complete, use [Send Notifications](/docs/guides/send-notifications.md) to exercise the canonical API flow.

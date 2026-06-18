@@ -150,8 +150,19 @@ services:
       KAFKA_NOTIFICATION_TOPIC: notification.requests
       NOTIFICATION_API_AUTH_REQUIRED: "false"
       NOTIFICATION_ADMIN_API_AUTH_REQUIRED: "true"
-      NOTIFICATION_ADMIN_API_TOKEN: integration-admin-token
-      NOTIFICATION_READONLY_API_TOKEN: integration-read-token
+      NOTIFICATION_ADMIN_API_TOKEN: local-admin-token
+      NOTIFICATION_READONLY_API_TOKEN: local-read-token
+      NOTIFICATION_RATE_LIMIT_ENABLED: "false"
+      NOTIFICATION_RATE_LIMIT_ANON_RPS: "2"
+      NOTIFICATION_RATE_LIMIT_ANON_BURST: "4"
+      NOTIFICATION_RATE_LIMIT_CLIENT_RPS: "10"
+      NOTIFICATION_RATE_LIMIT_CLIENT_BURST: "20"
+      NOTIFICATION_RATE_LIMIT_READ_RPS: "15"
+      NOTIFICATION_RATE_LIMIT_READ_BURST: "30"
+      NOTIFICATION_RATE_LIMIT_ADMIN_RPS: "10"
+      NOTIFICATION_RATE_LIMIT_ADMIN_BURST: "20"
+      NOTIFICATION_RATE_LIMIT_CLEANUP_INTERVAL: "5m"
+      NOTIFICATION_RATE_LIMIT_ENTRY_TTL: "15m"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -205,7 +216,7 @@ services:
       APP_VERSION: dev
       PORT: 8082
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/notification_control_plane?sslmode=disable
-      CALLBACK_PROVIDER_SECRET_DEMO: demo-callback-secret
+      CALLBACK_PROVIDER_SECRET: replace-me
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -227,7 +238,7 @@ services:
       APP_ENV: local
       APP_VERSION: dev
       PORT: 8091
-      EMAIL_PROVIDER_API_KEY_DEMO: demo-email-provider-key
+      EMAIL_PROVIDER_API_KEY: replace-me
     ports:
       - "8091:8091"
 
@@ -241,7 +252,7 @@ services:
       APP_ENV: local
       APP_VERSION: dev
       PORT: 8092
-      SMS_PROVIDER_AUTH_TOKEN_DEMO: demo-sms-provider-token
+      SMS_PROVIDER_AUTH_TOKEN: replace-me
     ports:
       - "8092:8092"
 
@@ -255,7 +266,7 @@ services:
       APP_ENV: local
       APP_VERSION: dev
       PORT: 8093
-      WEBHOOK_PROVIDER_SHARED_SECRET_DEMO: demo-webhook-shared-secret
+      WEBHOOK_PROVIDER_SHARED_SECRET: replace-me
     ports:
       - "8093:8093"
 
@@ -269,7 +280,7 @@ services:
       APP_ENV: local
       APP_VERSION: dev
       PORT: 8094
-      PUSH_PROVIDER_SERVICE_ACCOUNT_JSON_DEMO: '{"access_token":"demo-push-provider-token"}'
+      PUSH_PROVIDER_SERVICE_ACCOUNT_JSON: '{"access_token":"replace-me"}'
     ports:
       - "8094:8094"
 
@@ -283,8 +294,8 @@ services:
       APP_ENV: local
       APP_VERSION: dev
       PORT: 8095
-      WHATSAPP_GUPSHUP_PASSWORD_DEMO: demo-pass
-      WHATSAPP_KARIX_KEY_DEMO: demo-karix-key
+      WHATSAPP_GUPSHUP_PASSWORD: replace-me
+      WHATSAPP_KARIX_KEY: replace-me
     ports:
       - "8095:8095"
 

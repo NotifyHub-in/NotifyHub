@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/httpx"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/serviceinfo"
-	"github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
-	obsruntime "github.com/Arunshaik2001/notification-control-plane/libs/observability/runtime"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/config"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/httpx"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/serviceinfo"
+	"github.com/NotifyHub-in/NotifyHub/libs/observability/metrics"
+	obsruntime "github.com/NotifyHub-in/NotifyHub/libs/observability/runtime"
 )
 
 type RouteRegistrar func(mux *http.ServeMux, info serviceinfo.Info, registry *metrics.Registry)

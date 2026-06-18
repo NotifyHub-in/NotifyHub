@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="NotifyHub documentation hub." />
+    <title>NotifyHub Docs</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="site-shell docs-page">
+      <header class="site-header">
+        <div class="header-inner">
+          <a class="brand" href="/">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-title">
+              <strong>NotifyHub</strong>
+              <span>Documentation</span>
+            </span>
+          </a>
+          <button class="mobile-toggle" type="button" data-mobile-toggle aria-expanded="false" aria-controls="site-nav">
+            Menu
+          </button>
+          <nav class="nav" id="site-nav" data-nav>
+            <a href="/docs/" aria-current="page">Docs</a>
+            <a href="/docs/getting-started.html">Getting started</a>
+            <a href="/docs/architecture.html">Architecture</a>
+            <a href="/docs/channels.html">Channels</a>
+            <a href="/docs/deployment.html">Deployment</a>
+          </nav>
+        </div>
+      </header>
+      <main>
+        <section class="page-hero">
+          <div class="page-inner">
+            <div class="surface">
+              <div class="breadcrumbs">
+                <a href="/">Home</a>
+                <span>·</span>
+                <span>Docs</span>
+              </div>
+              <h1>Everything your team needs to run NotifyHub.</h1>
+              <p class="lede">
+                The docs are organized as a product manual: start with onboarding, then move through architecture, channels, deployment, and operations.
+              </p>
+            </div>
+          </div>
+        </section>
+        <section class="section">
+          <div class="page-inner">
+            <div class="docs-grid">
+              <a class="docs-card surface" href="/docs/getting-started.html">
+                <span class="eyebrow-inline">Start here</span>
+                <h3>Getting started</h3>
+                <p>Who the platform is for, how the client contract works, and the minimum setup steps.</p>
+              </a>
+              <a class="docs-card surface" href="/docs/architecture.html">
+                <span class="eyebrow-inline">Deep dive</span>
+                <h3>Architecture</h3>
+                <p>Request flow, model relationships, and how the control plane separates concerns.</p>
+              </a>
+              <a class="docs-card surface" href="/docs/channels.html">
+                <span class="eyebrow-inline">Examples</span>
+                <h3>Channels</h3>
+                <p>Canonical send examples for email, SMS, WhatsApp, push, and webhook.</p>
+              </a>
+              <a class="docs-card surface" href="/docs/deployment.html">
+                <span class="eyebrow-inline">Operate</span>
+                <h3>Deployment</h3>
+                <p>Local, Kubernetes, and AWS deployment notes with safe defaults and rollback guidance.</p>
+              </a>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

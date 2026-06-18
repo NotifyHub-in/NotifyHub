@@ -66,3 +66,116 @@ type ProviderCallbackEnvelope struct {
 	Metadata          map[string]string `json:"metadata,omitempty"`
 	ReceivedAt        time.Time         `json:"received_at,omitempty"`
 }
+
+type GupshupWhatsAppInboundMessage struct {
+	App       string                        `json:"app"`
+	Timestamp int64                         `json:"timestamp"`
+	Version   int                           `json:"version"`
+	Type      string                        `json:"type"`
+	Payload   GupshupWhatsAppInboundPayload `json:"payload"`
+}
+
+type GupshupWhatsAppInboundPayload struct {
+	ID      string                         `json:"id"`
+	Source  string                         `json:"source"`
+	Type    string                         `json:"type"`
+	Payload GupshupWhatsAppInboundContent  `json:"payload"`
+	Sender  GupshupWhatsAppInboundSender   `json:"sender"`
+	Context *GupshupWhatsAppInboundContext `json:"context,omitempty"`
+}
+
+type GupshupWhatsAppInboundContent struct {
+	Text    string `json:"text,omitempty"`
+	Caption string `json:"caption,omitempty"`
+	URL     string `json:"url,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Type    string `json:"type,omitempty"`
+}
+
+type GupshupWhatsAppInboundSender struct {
+	Phone       string `json:"phone"`
+	Name        string `json:"name"`
+	CountryCode string `json:"country_code"`
+	DialCode    string `json:"dial_code"`
+}
+
+type GupshupWhatsAppInboundContext struct {
+	ID   string `json:"id"`
+	GsID string `json:"gsId"`
+}
+
+type MetaWhatsAppWebhookPayload struct {
+	Object string                     `json:"object"`
+	Entry  []MetaWhatsAppWebhookEntry `json:"entry"`
+}
+
+type MetaWhatsAppWebhookEntry struct {
+	ID      string                      `json:"id"`
+	Changes []MetaWhatsAppWebhookChange `json:"changes"`
+}
+
+type MetaWhatsAppWebhookChange struct {
+	Field string                   `json:"field"`
+	Value MetaWhatsAppWebhookValue `json:"value"`
+}
+
+type MetaWhatsAppWebhookValue struct {
+	Messages []MetaWhatsAppMessage `json:"messages"`
+	Contacts []MetaWhatsAppContact `json:"contacts"`
+	Metadata MetaWhatsAppMetadata  `json:"metadata"`
+}
+
+type MetaWhatsAppMessage struct {
+	ID        string                       `json:"id"`
+	From      string                       `json:"from"`
+	Timestamp string                       `json:"timestamp"`
+	Type      string                       `json:"type"`
+	Text      *MetaWhatsAppMessageText     `json:"text,omitempty"`
+	Image     *MetaWhatsAppMessageMedia    `json:"image,omitempty"`
+	Video     *MetaWhatsAppMessageMedia    `json:"video,omitempty"`
+	Document  *MetaWhatsAppMessageMedia    `json:"document,omitempty"`
+	Audio     *MetaWhatsAppMessageMedia    `json:"audio,omitempty"`
+	Sticker   *MetaWhatsAppMessageMedia    `json:"sticker,omitempty"`
+	Location  *MetaWhatsAppMessageLocation `json:"location,omitempty"`
+	Contacts  []any                        `json:"contacts,omitempty"`
+	Context   *MetaWhatsAppMessageContext  `json:"context,omitempty"`
+}
+
+type MetaWhatsAppMessageText struct {
+	Body string `json:"body"`
+}
+
+type MetaWhatsAppMessageMedia struct {
+	ID       string `json:"id,omitempty"`
+	Caption  string `json:"caption,omitempty"`
+	MimeType string `json:"mime_type,omitempty"`
+	Sha256   string `json:"sha256,omitempty"`
+}
+
+type MetaWhatsAppMessageLocation struct {
+	Latitude  float64 `json:"latitude,omitempty"`
+	Longitude float64 `json:"longitude,omitempty"`
+	Name      string  `json:"name,omitempty"`
+	Address   string  `json:"address,omitempty"`
+}
+
+type MetaWhatsAppMessageContext struct {
+	ID              string `json:"id,omitempty"`
+	From            string `json:"from,omitempty"`
+	ReferredProduct struct {
+		CatalogID string `json:"catalog_id,omitempty"`
+		ProductID string `json:"product_retailer_id,omitempty"`
+	} `json:"referred_product,omitempty"`
+}
+
+type MetaWhatsAppContact struct {
+	Profile struct {
+		Name string `json:"name"`
+	} `json:"profile"`
+	WAID string `json:"wa_id"`
+}
+
+type MetaWhatsAppMetadata struct {
+	DisplayPhoneNumber string `json:"display_phone_number"`
+	PhoneNumberID      string `json:"phone_number_id"`
+}

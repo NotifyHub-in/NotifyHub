@@ -14,14 +14,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/app"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/httpx"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/secrets"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/serviceinfo"
-	"github.com/Arunshaik2001/notification-control-plane/libs/observability/logging"
-	"github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
+	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/app"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/config"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/httpx"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/secrets"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/serviceinfo"
+	"github.com/NotifyHub-in/NotifyHub/libs/observability/logging"
+	"github.com/NotifyHub-in/NotifyHub/libs/observability/metrics"
 )
 
 func main() {
@@ -143,6 +143,16 @@ type gupshupSMSAdapter struct{}
 
 type karixSMSAdapter struct{}
 
+type dummySMSAdapter struct{}
+
+var smsAdapters = map[string]smsAdapter{
+	"":            twilioSMSAdapter{},
+	"twilio-sms":  twilioSMSAdapter{},
+	"gupshup-sms": gupshupSMSAdapter{},
+	"karix-sms":   karixSMSAdapter{},
+	"dummy-sms":   dummySMSAdapter{},
+}
+
 type providerOutboundRequest struct {
 	URL     string
 	Method  string
@@ -176,6 +186,19 @@ type karixSmsMessage struct {
 	Type string   `json:"type"`
 }
 
+type dummySMSRequest struct {
+	Destination    string            `json:"destination"`
+	Message        string            `json:"message"`
+	CallbackURL    string            `json:"callback_url"`
+	CallbackSecret string            `json:"callback_secret"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
+}
+
+type dummySMSResponse struct {
+	MessageID string `json:"message_id"`
+	Status    string `json:"status,omitempty"`
+}
+
 type smsAdapterError struct {
 	statusCode     int
 	message        string
@@ -199,16 +222,11 @@ func resolveSMSProviderConfig(req *notification.ConnectorSendRequest) *smsAdapte
 }
 
 func selectSMSAdapter(providerKey string) (smsAdapter, error) {
-	switch providerKey {
-	case "", "twilio-sms":
-		return twilioSMSAdapter{}, nil
-	case "gupshup-sms":
-		return gupshupSMSAdapter{}, nil
-	case "karix-sms":
-		return karixSMSAdapter{}, nil
-	default:
+	adapter, ok := smsAdapters[providerKey]
+	if !ok {
 		return nil, fmt.Errorf("unsupported sms provider %q", providerKey)
 	}
+	return adapter, nil
 }
 
 func (twilioSMSAdapter) validate(req notification.ConnectorSendRequest) *smsAdapterError {
@@ -368,25 +386,25 @@ func (gupshupSMSAdapter) build(req notification.ConnectorSendRequest) (providerO
 		}
 	}
 	query := url.Values{}
-		query.Set("method", "sendMessage")
-		query.Set("msg", req.Body)
-		query.Set("priority", "8")
-		query.Set("v", version)
-		query.Set("userid", username)
-		query.Set("password", password)
-		query.Set("send_to", normalizeSMSDestination(req.Destination))
-		if isUnicodeSMSRequest(req) {
-			query.Set("unicode", "1")
-			query.Set("msg_type", "Unicode_Text")
-		} else {
-			query.Set("format", "text")
-			query.Set("channel", "sms")
-		}
-		parsed, _ := url.Parse(endpoint)
-		parsed.RawQuery = query.Encode()
-		return providerOutboundRequest{
-			URL:    parsed.String(),
-			Method: http.MethodGet,
+	query.Set("method", "sendMessage")
+	query.Set("msg", req.Body)
+	query.Set("priority", "8")
+	query.Set("v", version)
+	query.Set("userid", username)
+	query.Set("password", password)
+	query.Set("send_to", normalizeSMSDestination(req.Destination))
+	if isUnicodeSMSRequest(req) {
+		query.Set("unicode", "1")
+		query.Set("msg_type", "Unicode_Text")
+	} else {
+		query.Set("format", "text")
+		query.Set("channel", "sms")
+	}
+	parsed, _ := url.Parse(endpoint)
+	parsed.RawQuery = query.Encode()
+	return providerOutboundRequest{
+		URL:    parsed.String(),
+		Method: http.MethodGet,
 		Headers: map[string]string{
 			"Accept": "*/*",
 		},
@@ -520,6 +538,102 @@ func (karixSMSAdapter) build(req notification.ConnectorSendRequest) (providerOut
 
 func (karixSMSAdapter) send(ctx context.Context, client *http.Client, outbound providerOutboundRequest) (string, *smsAdapterError) {
 	return executeSMSProviderRequest(ctx, client, outbound, "sms")
+}
+
+func (dummySMSAdapter) validate(req notification.ConnectorSendRequest) *smsAdapterError {
+	if strings.TrimSpace(req.Destination) == "" {
+		return &smsAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "invalid phone destination",
+			code:           "invalid_destination",
+			classification: notification.FailureClassInvalidRequest,
+		}
+	}
+	return nil
+}
+
+func (dummySMSAdapter) build(req notification.ConnectorSendRequest) (providerOutboundRequest, *smsAdapterError) {
+	baseURL := req.ProviderConfig["base_url"]
+	callbackURL := req.ProviderConfig["callback_url"]
+	callbackSecret := req.ProviderConfig["callback_secret"]
+	if baseURL == "" || callbackURL == "" || callbackSecret == "" {
+		return providerOutboundRequest{}, &smsAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "missing dummy sms provider config",
+			code:           "missing_provider_config",
+			classification: notification.FailureClassMisconfigured,
+		}
+	}
+	endpoint, err := joinProviderURL(baseURL, "/send")
+	if err != nil {
+		return providerOutboundRequest{}, &smsAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "invalid dummy sms base_url",
+			code:           "invalid_provider_config",
+			classification: notification.FailureClassMisconfigured,
+		}
+	}
+	payload := dummySMSRequest{
+		Destination:    normalizeSMSDestination(req.Destination),
+		Message:        req.Body,
+		CallbackURL:    callbackURL,
+		CallbackSecret: callbackSecret,
+		Metadata:       req.Metadata,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return providerOutboundRequest{}, &smsAdapterError{
+			statusCode:     http.StatusInternalServerError,
+			message:        "failed to encode dummy sms payload",
+			code:           "encode_failed",
+			classification: notification.FailureClassTransient,
+			retryable:      true,
+		}
+	}
+	return providerOutboundRequest{
+		URL:    endpoint,
+		Method: http.MethodPost,
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+			"Accept":       "*/*",
+		},
+		Body: body,
+	}, nil
+}
+
+func (dummySMSAdapter) send(ctx context.Context, client *http.Client, outbound providerOutboundRequest) (string, *smsAdapterError) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	req, err := http.NewRequestWithContext(ctx, outbound.Method, outbound.URL, bytes.NewReader(outbound.Body))
+	if err != nil {
+		return "", &smsAdapterError{
+			statusCode:     http.StatusInternalServerError,
+			message:        "failed to build provider request",
+			code:           "request_build_failed",
+			classification: notification.FailureClassTransient,
+			retryable:      true,
+		}
+	}
+	for key, value := range outbound.Headers {
+		req.Header.Set(key, value)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", &smsAdapterError{
+			statusCode:     http.StatusBadGateway,
+			message:        "dummy provider request failed: " + err.Error(),
+			code:           "provider_request_failed",
+			classification: notification.FailureClassTransient,
+			retryable:      true,
+		}
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", smsProviderErrorFromHTTPResponse(resp.StatusCode, string(body), "sms")
+	}
+	return providerMessageIDFromResponse(resp.Header, body), nil
 }
 
 func executeSMSProviderRequest(ctx context.Context, client *http.Client, outbound providerOutboundRequest, channelLabel string) (string, *smsAdapterError) {

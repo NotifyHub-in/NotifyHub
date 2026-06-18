@@ -1,6 +1,6 @@
-# Deploy The Notification Control Plane To Kubernetes
+# Deploy The NotifyHub To Kubernetes
 
-This guide shows the practical, step-by-step path for deploying the Notification Control Plane to Kubernetes.
+This guide shows the practical, step-by-step path for deploying the NotifyHub to Kubernetes.
 
 It is written for operators who want to run the platform in a cluster, not just locally.
 
@@ -85,7 +85,7 @@ metadata:
   namespace: notification-control-plane
 type: Opaque
 stringData:
-  farm_fcm_content_adminsdk.json: "<service-account-json-placeholder>"
+  firebase_service_account.json: "<service-account-json-placeholder>"
   gupshup_whatsapp_password: "<gupshup-whatsapp-password-placeholder>"
   gupshup_sms_username: "<gupshup-sms-username-placeholder>"
   gupshup_sms_password: "<gupshup-sms-password-placeholder>"
@@ -267,7 +267,7 @@ Then confirm:
 3. the verification secret matches on both sides, if verification is enabled
 4. the request transitions from accepted to delivered or failed after the callback arrives
 
-Use [Callbacks And Delivery Tracking](/Users/Shaik/notifications/notification-control-plane/docs/guides/callbacks-and-delivery-tracking.md) for the exact callback route model and verification flow.
+Use [Callbacks And Delivery Tracking](/docs/guides/callbacks-and-delivery-tracking.md) for the exact callback route model and verification flow.
 
 ## Step 12: Roll Back If Needed
 
@@ -297,4 +297,4 @@ Before you declare the release complete:
 
 ## Related Channel Setup
 
-After the cluster is deployed, follow the channel-specific checklist in [Channel Setup Checklist](/Users/Shaik/notifications/notification-control-plane/docs/guides/channel-setup-checklist.md).
+After the cluster is deployed, follow the channel-specific checklist in [Channel Setup Checklist](/docs/guides/channel-setup-checklist.md).

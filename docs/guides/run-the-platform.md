@@ -1,6 +1,6 @@
 # Run The Platform
 
-This guide shows how to run the Notification Control Plane locally in the same production-shaped model used by the current codebase.
+This guide shows how to run the NotifyHub locally in the same production-shaped model used by the current codebase.
 
 ## What Runs In The Local Stack
 
@@ -29,7 +29,7 @@ flowchart LR
     API["api"]
     W["worker"]
     CB["callback-gateway"]
-    CE["connector-email"]
+    EMAIL["connector-email"]
     CS["connector-sms"]
     CW["connector-whatsapp"]
     CP["connector-push"]
@@ -44,12 +44,12 @@ flowchart LR
     API --> K
     K --> W
     W --> PG
-    W --> CE
+    W --> EMAIL
     W --> CS
     W --> CW
     W --> CP
     W --> CH
-    CE --> SEC
+    EMAIL --> SEC
     CS --> SEC
     CW --> SEC
     CP --> SEC
@@ -58,7 +58,7 @@ flowchart LR
     OBS --- API
     OBS --- W
     OBS --- CB
-    OBS --- CE
+    OBS --- EMAIL
     OBS --- CS
     OBS --- CW
     OBS --- CP
@@ -87,19 +87,18 @@ mkdir -p /tmp/notification-control-plane-secrets
 
 Put only the files you need there. Common examples:
 
-- `farm_fcm_content_adminsdk.json`
-- `afs_admin_fcm_content_adminsdk.json`
-- `ce_email_smtp_user.txt`
-- `ce_email_smtp_password.txt`
-- `ce_gupshup_sms_username.txt`
-- `ce_gupshup_sms_password.txt`
-- `ce_gupshup_whatsapp_password.txt`
+- `firebase_service_account.json`
+- `smtp_user.txt`
+- `smtp_password.txt`
+- `sms_username.txt`
+- `sms_password.txt`
+- `whatsapp_password.txt`
 
 Do not commit these files into git.
 
-The admin/config write surface is protected with `X-Notification-Admin-Token`. In the default local stack, the token is `integration-admin-token`, and the same value is wired into Docker Compose for local runs.
+The admin/config write surface is protected with `X-Notification-Admin-Token`. In the default local stack, the token is `<admin-token>`, and the same value is wired into Docker Compose for local runs.
 
-Read-only config/status GETs can use `X-Notification-Read-Token` or the admin token. In the default local stack, the read token is `integration-read-token`, and it is also wired into Docker Compose for local runs.
+Read-only config/status GETs can use `X-Notification-Read-Token` or the admin token. In the default local stack, the read token is `<read-token>`, and it is also wired into Docker Compose for local runs.
 
 ## Step 2: Start The Stack
 

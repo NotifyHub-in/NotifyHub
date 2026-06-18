@@ -1,4 +1,4 @@
-Notification Control Plane has been installed.
+NotifyHub has been installed.
 
 Core services:
 - API: {{ include "notification-control-plane.componentName" (list . "api") }}

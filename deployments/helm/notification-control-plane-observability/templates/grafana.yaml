@@ -56,15 +56,15 @@ data:
     apiVersion: 1
 
     providers:
-      - name: Notification Control Plane
-        folder: Notification Control Plane
+      - name: NotifyHub
+        folder: NotifyHub
         type: file
         disableDeletion: false
         updateIntervalSeconds: 10
         options:
           path: /var/lib/grafana/dashboards
-      - name: Notification Control Plane Alerts
-        folder: Notification Control Plane
+      - name: NotifyHub Alerts
+        folder: NotifyHub
         type: file
         disableDeletion: false
         updateIntervalSeconds: 10
@@ -151,7 +151,7 @@ data:
       },
       "timepicker": {},
       "timezone": "",
-      "title": "Notification Control Plane Alerts",
+      "title": "NotifyHub Alerts",
       "version": 1,
       "weekStart": ""
     }

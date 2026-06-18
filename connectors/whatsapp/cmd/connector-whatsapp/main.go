@@ -11,17 +11,19 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/app"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/httpx"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/secrets"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/serviceinfo"
-	"github.com/Arunshaik2001/notification-control-plane/libs/observability/logging"
-	"github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
+	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/app"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/config"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/httpx"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/secrets"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/serviceinfo"
+	"github.com/NotifyHub-in/NotifyHub/libs/observability/logging"
+	"github.com/NotifyHub-in/NotifyHub/libs/observability/metrics"
 )
 
 func main() {
@@ -143,11 +145,53 @@ type gupshupWhatsAppAdapter struct{}
 
 type karixWhatsAppAdapter struct{}
 
+var whatsappAdapters = map[string]whatsappAdapter{
+	"":                 gupshupWhatsAppAdapter{},
+	"gupshup-whatsapp": gupshupWhatsAppAdapter{},
+	"karix-whatsapp":   karixWhatsAppAdapter{},
+}
+
 type providerOutboundRequest struct {
 	URL     string
 	Method  string
 	Headers map[string]string
 	Body    []byte
+}
+
+type whatsappMediaSpec struct {
+	Type     string
+	URL      string
+	FileName string
+	Title    string
+}
+
+func whatsappMediaSpecFromRequest(req notification.ConnectorSendRequest) whatsappMediaSpec {
+	return whatsappMediaSpec{
+		Type:     normalizeWhatsAppMediaType(firstNonEmpty(req.Metadata["media_type"], req.Metadata["media_content_type"], req.Metadata["content_type"])),
+		URL:      firstNonEmpty(req.Metadata["media_url"], req.Metadata["media_link"]),
+		FileName: firstNonEmpty(req.Metadata["media_file_name"], req.Metadata["media_name"], req.Metadata["filename"]),
+		Title:    firstNonEmpty(req.Metadata["media_title"], req.Metadata["title"]),
+	}
+}
+
+func (m whatsappMediaSpec) present() bool {
+	return m.Type != "" || m.URL != "" || m.FileName != "" || m.Title != ""
+}
+
+func (m whatsappMediaSpec) isText() bool {
+	return m.Type == "" || m.Type == "text"
+}
+
+func normalizeWhatsAppMediaType(mediaType string) string {
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	switch mediaType {
+	case "photo":
+		return "image"
+	case "file", "doc":
+		return "document"
+	default:
+		return mediaType
+	}
 }
 
 type whatsappAdapterError struct {
@@ -173,14 +217,11 @@ func resolveWhatsAppProviderConfig(req *notification.ConnectorSendRequest) *what
 }
 
 func selectWhatsAppAdapter(providerKey string) (whatsappAdapter, error) {
-	switch providerKey {
-	case "", "gupshup-whatsapp":
-		return gupshupWhatsAppAdapter{}, nil
-	case "karix-whatsapp":
-		return karixWhatsAppAdapter{}, nil
-	default:
+	adapter, ok := whatsappAdapters[providerKey]
+	if !ok {
 		return nil, fmt.Errorf("unsupported whatsapp provider %q", providerKey)
 	}
+	return adapter, nil
 }
 
 func (gupshupWhatsAppAdapter) validate(req notification.ConnectorSendRequest) *whatsappAdapterError {
@@ -219,18 +260,23 @@ func (gupshupWhatsAppAdapter) build(req notification.ConnectorSendRequest) (prov
 	if baseURL == "" {
 		baseURL = "https://media.smsgupshup.com/GatewayAPI/rest"
 	}
+	media := whatsappMediaSpecFromRequest(req)
+	if isGupshupMediaTemplate(req.Metadata) {
+		return buildGupshupWhatsAppTemplateRequest(req, baseURL)
+	}
+
 	body := url.Values{}
 	interactive := parseInteractiveAttributes(req.Metadata["interactive_attributes"])
 	isTemplate := false
-	if mediaType := strings.ToLower(strings.TrimSpace(req.Metadata["media_type"])); mediaType != "" && mediaType != "text" {
+	if media.present() && !media.isText() {
 		body.Set("method", "SendMediaMessage")
-		body.Set("msg_type", strings.ToUpper(mediaType))
+		body.Set("msg_type", strings.ToUpper(media.Type))
 		body.Set("caption", req.Body)
-		if mediaURL := req.Metadata["media_url"]; mediaURL != "" {
-			body.Set("media_url", mediaURL)
+		if media.URL != "" {
+			body.Set("media_url", media.URL)
 		}
-		if strings.EqualFold(mediaType, "document") && req.Metadata["media_file_name"] != "" {
-			body.Set("filename", req.Metadata["media_file_name"])
+		if strings.EqualFold(media.Type, "document") && media.FileName != "" {
+			body.Set("filename", media.FileName)
 		}
 	} else {
 		body.Set("method", "SendMessage")
@@ -269,6 +315,223 @@ func (gupshupWhatsAppAdapter) build(req notification.ConnectorSendRequest) (prov
 		},
 		Body: []byte(body.Encode()),
 	}, nil
+}
+
+func isGupshupMediaTemplate(metadata map[string]string) bool {
+	mediaType := normalizeWhatsAppMediaType(firstNonEmpty(metadata["media_type"], metadata["media_content_type"], metadata["content_type"]))
+	if mediaType == "" || mediaType == "text" {
+		return false
+	}
+	return firstNonEmpty(metadata["gupshup_template_id"], metadata["gupshup_template_name"], metadata["template_id"], metadata["template_name"]) != ""
+}
+
+type gupshupTemplateSendRequest struct {
+	Source      string                      `json:"source"`
+	Destination string                      `json:"destination"`
+	Channel     string                      `json:"channel,omitempty"`
+	Template    gupshupTemplateDescriptor   `json:"template"`
+	Message     gupshupTemplateMediaMessage `json:"message"`
+}
+
+type gupshupTemplateDescriptor struct {
+	ID     string   `json:"id"`
+	Params []string `json:"params,omitempty"`
+}
+
+type gupshupTemplateMediaMessage struct {
+	Type     string                          `json:"type"`
+	Image    *gupshupTemplateMediaReference  `json:"image,omitempty"`
+	Video    *gupshupTemplateMediaReference  `json:"video,omitempty"`
+	Document *gupshupTemplateDocumentMessage `json:"document,omitempty"`
+	Audio    *gupshupTemplateMediaReference  `json:"audio,omitempty"`
+	Sticker  *gupshupTemplateMediaReference  `json:"sticker,omitempty"`
+}
+
+type gupshupTemplateMediaReference struct {
+	Link string `json:"link"`
+}
+
+type gupshupTemplateDocumentMessage struct {
+	Link     string `json:"link"`
+	Filename string `json:"filename,omitempty"`
+}
+
+func buildGupshupWhatsAppTemplateRequest(req notification.ConnectorSendRequest, baseURL string) (providerOutboundRequest, *whatsappAdapterError) {
+	templateID := firstNonEmpty(req.Metadata["gupshup_template_id"], req.Metadata["gupshup_template_name"], req.Metadata["template_id"], req.Metadata["template_name"])
+	source := firstNonEmpty(req.ProviderConfig["source"], req.ProviderConfig["sender"], req.ProviderConfig["username"])
+	if templateID == "" || source == "" {
+		return providerOutboundRequest{}, &whatsappAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "missing gupshup whatsapp template config",
+			code:           "missing_provider_config",
+			classification: notification.FailureClassMisconfigured,
+		}
+	}
+
+	media := whatsappMediaSpecFromRequest(req)
+	if media.isText() {
+		return providerOutboundRequest{}, &whatsappAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "gupshup whatsapp template send requires media_type",
+			code:           "missing_media_type",
+			classification: notification.FailureClassMisconfigured,
+		}
+	}
+	if media.URL == "" {
+		return providerOutboundRequest{}, &whatsappAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "gupshup whatsapp template send requires media_url",
+			code:           "missing_media_url",
+			classification: notification.FailureClassMisconfigured,
+		}
+	}
+
+	params := gupshupTemplateParams(req)
+	message := gupshupTemplateMediaMessage{Type: media.Type}
+	switch media.Type {
+	case "image":
+		message.Image = &gupshupTemplateMediaReference{Link: media.URL}
+	case "video":
+		message.Video = &gupshupTemplateMediaReference{Link: media.URL}
+	case "document":
+		message.Document = &gupshupTemplateDocumentMessage{
+			Link:     media.URL,
+			Filename: media.FileName,
+		}
+	case "audio":
+		message.Audio = &gupshupTemplateMediaReference{Link: media.URL}
+	case "sticker":
+		message.Sticker = &gupshupTemplateMediaReference{Link: media.URL}
+	default:
+		return providerOutboundRequest{}, &whatsappAdapterError{
+			statusCode:     http.StatusBadRequest,
+			message:        "unsupported gupshup whatsapp media type",
+			code:           "unsupported_media_type",
+			classification: notification.FailureClassInvalidRequest,
+		}
+	}
+
+	payload := gupshupTemplateSendRequest{
+		Source:      source,
+		Destination: normalizeDestination(req.Destination),
+		Channel:     "whatsapp",
+		Template: gupshupTemplateDescriptor{
+			ID:     templateID,
+			Params: params,
+		},
+		Message: message,
+	}
+	endpoint := req.ProviderConfig["template_url"]
+	if endpoint == "" {
+		endpoint = resolveGupshupTemplateEndpoint(baseURL)
+	}
+
+	return providerOutboundRequest{
+		URL:    endpoint,
+		Method: http.MethodPost,
+		Headers: map[string]string{
+			"Content-Type": "application/x-www-form-urlencoded",
+			"Accept":       "*/*",
+		},
+		Body: []byte(url.Values{
+			"source":      []string{payload.Source},
+			"destination": []string{payload.Destination},
+			"template":    []string{string(bodyFieldJSON(payload.Template))},
+			"message":     []string{string(bodyFieldJSON(payload.Message))},
+			"channel":     []string{payload.Channel},
+		}.Encode()),
+	}, nil
+}
+
+func bodyFieldJSON(value any) []byte {
+	body, _ := json.Marshal(value)
+	return body
+}
+
+func resolveGupshupTemplateEndpoint(baseURL string) string {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return "https://api.gupshup.io/wa/api/v1/template/msg"
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return strings.TrimRight(baseURL, "/") + "/wa/api/v1/template/msg"
+	}
+	if strings.Contains(strings.ToLower(parsed.Path), "/gatewayapi/rest") {
+		parsed.Path = "/wa/api/v1/template/msg"
+	} else {
+		parsed.Path = strings.TrimRight(parsed.Path, "/") + "/wa/api/v1/template/msg"
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func gupshupTemplateParams(req notification.ConnectorSendRequest) []string {
+	if len(req.Metadata) == 0 && len(req.TemplateVariables) == 0 {
+		if strings.TrimSpace(req.Body) == "" {
+			return nil
+		}
+		return []string{req.Body}
+	}
+
+	indexedKeys := make([]int, 0, len(req.Metadata))
+	indexedValues := make(map[int]string, len(req.Metadata))
+	for key, variableName := range req.Metadata {
+		idx, err := strconv.Atoi(strings.TrimSpace(key))
+		if err != nil {
+			continue
+		}
+		indexedKeys = append(indexedKeys, idx)
+		if value := req.TemplateVariables[variableName]; value != "" {
+			indexedValues[idx] = value
+			continue
+		}
+		if strings.TrimSpace(req.Body) != "" && len(req.TemplateVariables) == 0 {
+			indexedValues[idx] = req.Body
+			continue
+		}
+		indexedValues[idx] = variableName
+	}
+	if len(indexedKeys) > 0 {
+		sort.Ints(indexedKeys)
+		params := make([]string, 0, len(indexedKeys))
+		for _, idx := range indexedKeys {
+			if value := indexedValues[idx]; value != "" {
+				params = append(params, value)
+			}
+		}
+		if len(params) > 0 {
+			return params
+		}
+	}
+
+	if len(req.TemplateVariables) == 1 {
+		for _, value := range req.TemplateVariables {
+			if value != "" {
+				return []string{value}
+			}
+		}
+	}
+
+	keys := make([]string, 0, len(req.TemplateVariables))
+	for key := range req.TemplateVariables {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	params := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if value := req.TemplateVariables[key]; value != "" {
+			params = append(params, value)
+		}
+	}
+	if len(params) > 0 {
+		return params
+	}
+	if strings.TrimSpace(req.Body) != "" {
+		return []string{req.Body}
+	}
+	return nil
 }
 
 func (gupshupWhatsAppAdapter) send(ctx context.Context, client *http.Client, outbound providerOutboundRequest) (string, *whatsappAdapterError) {
@@ -431,6 +694,7 @@ func (karixWhatsAppAdapter) build(req notification.ConnectorSendRequest) (provid
 			classification: notification.FailureClassMisconfigured,
 		}
 	}
+	media := whatsappMediaSpecFromRequest(req)
 
 	bodyParameterValues := map[string]string{}
 	for key, value := range req.TemplateVariables {
@@ -460,7 +724,7 @@ func (karixWhatsAppAdapter) build(req notification.ConnectorSendRequest) (provid
 			ParameterValues: bodyParameterValues,
 		},
 	}
-	if mediaType := req.Metadata["media_type"]; mediaType != "" || req.Metadata["media_url"] != "" || req.Metadata["media_title"] != "" || req.Metadata["media_file_name"] != "" {
+	if media.present() {
 		content.Template = nil
 		content.Type = "MEDIA_TEMPLATE"
 		buttons := parseKarixButtons(req.Metadata["interactive_attributes"])
@@ -468,10 +732,10 @@ func (karixWhatsAppAdapter) build(req notification.ConnectorSendRequest) (provid
 			TemplateID:          templateName,
 			BodyParameterValues: bodyParameterValues,
 			Media: &karixWhatsAppMedia{
-				Type:     firstNonEmpty(mediaType, "image"),
-				URL:      req.Metadata["media_url"],
-				FileName: req.Metadata["media_file_name"],
-				Title:    req.Metadata["media_title"],
+				Type:     firstNonEmpty(media.Type, "image"),
+				URL:      media.URL,
+				FileName: media.FileName,
+				Title:    media.Title,
 			},
 			Buttons: buttons,
 		}

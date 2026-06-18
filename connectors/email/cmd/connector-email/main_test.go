@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
+	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
 )
 
 func TestSendgridEmailAdapterSend(t *testing.T) {

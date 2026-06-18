@@ -15,14 +15,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/contracts/notification"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/app"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/httpx"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/secrets"
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/serviceinfo"
-	"github.com/Arunshaik2001/notification-control-plane/libs/observability/logging"
-	"github.com/Arunshaik2001/notification-control-plane/libs/observability/metrics"
+	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/app"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/config"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/httpx"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/secrets"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/serviceinfo"
+	"github.com/NotifyHub-in/NotifyHub/libs/observability/logging"
+	"github.com/NotifyHub-in/NotifyHub/libs/observability/metrics"
 )
 
 func main() {
@@ -148,6 +148,12 @@ type sendgridEmailAdapter struct{}
 
 type smtpEmailAdapter struct{}
 
+var emailAdapters = map[string]emailAdapter{
+	"":               sendgridEmailAdapter{},
+	"sendgrid-email": sendgridEmailAdapter{},
+	"smtp-email":     smtpEmailAdapter{},
+}
+
 type providerOutboundRequest struct {
 	Transport   string
 	URL         string
@@ -204,14 +210,11 @@ func resolveEmailProviderConfig(req *notification.ConnectorSendRequest) *emailAd
 }
 
 func selectEmailAdapter(providerKey string) (emailAdapter, error) {
-	switch providerKey {
-	case "", "sendgrid-email":
-		return sendgridEmailAdapter{}, nil
-	case "smtp-email":
-		return smtpEmailAdapter{}, nil
-	default:
+	adapter, ok := emailAdapters[providerKey]
+	if !ok {
 		return nil, fmt.Errorf("unsupported email provider %q", providerKey)
 	}
+	return adapter, nil
 }
 
 func (sendgridEmailAdapter) validate(req notification.ConnectorSendRequest) *emailAdapterError {

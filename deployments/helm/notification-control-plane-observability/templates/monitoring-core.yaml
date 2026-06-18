@@ -8,7 +8,7 @@ metadata:
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
   name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus
   labels:
@@ -18,6 +18,8 @@ rules:
   - apiGroups: [""]
     resources:
       - pods
+      - services
+      - endpoints
     verbs:
       - get
       - list
@@ -25,7 +27,7 @@ rules:
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
   name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus
   labels:
@@ -34,8 +36,9 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus
+    namespace: {{ .Release.Namespace }}
 roleRef:
-  kind: Role
+  kind: ClusterRole
   name: {{ include "notification-control-plane-observability.fullname" . }}-prometheus
   apiGroup: rbac.authorization.k8s.io
 
@@ -58,21 +61,16 @@ data:
     scrape_configs:
       - job_name: notification-control-plane
         metrics_path: /metrics
-        static_configs:
-          - targets:
-              - {{ printf "%s-api.%s.svc.cluster.local:8080" .Values.appReleaseName .Values.appNamespace | quote }}
-              - {{ printf "%s-worker.%s.svc.cluster.local:8081" .Values.appReleaseName .Values.appNamespace | quote }}
-              - {{ printf "%s-callback-gateway.%s.svc.cluster.local:8082" .Values.appReleaseName .Values.appNamespace | quote }}
-              - {{ printf "%s-connector-email.%s.svc.cluster.local:8091" .Values.appReleaseName .Values.appNamespace | quote }}
-              - {{ printf "%s-connector-sms.%s.svc.cluster.local:8092" .Values.appReleaseName .Values.appNamespace | quote }}
-              - {{ printf "%s-connector-webhook.%s.svc.cluster.local:8093" .Values.appReleaseName .Values.appNamespace | quote }}
-              - {{ printf "%s-connector-push.%s.svc.cluster.local:8094" .Values.appReleaseName .Values.appNamespace | quote }}
-              - {{ printf "%s-connector-whatsapp.%s.svc.cluster.local:8095" .Values.appReleaseName .Values.appNamespace | quote }}
-              - {{ printf "%s-postgres-exporter.%s.svc.cluster.local:%d" (include "notification-control-plane-observability.fullname" .) .Values.exportersNamespace (int .Values.postgresExporter.service.port) | quote }}
-              - {{ printf "%s-kafka-exporter.%s.svc.cluster.local:%d" (include "notification-control-plane-observability.fullname" .) .Values.exportersNamespace (int .Values.kafkaExporter.service.port) | quote }}
-{{- range .Values.prometheus.extraTargets }}
-              - {{ . | quote }}
-{{- end }}
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - {{ .Values.appNamespace | quote }}
+                - {{ .Values.exportersNamespace | quote }}
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: {{ printf "%s-(api|worker|callback-gateway|connector-email|connector-sms|connector-webhook|connector-push|connector-whatsapp)$|%s-(postgres-exporter|kafka-exporter)$" .Values.appReleaseName (include "notification-control-plane-observability.fullname" .) | quote }}
 
       - job_name: cadvisor
         metrics_path: /metrics
@@ -111,7 +109,7 @@ data:
             labels:
               severity: critical
             annotations:
-              summary: Notification Control Plane API is down
+              summary: NotifyHub API is down
               description: The API target has not been scrapeable for 2 minutes.
 
           - alert: NotificationControlPlaneWorkerDown
@@ -120,7 +118,7 @@ data:
             labels:
               severity: critical
             annotations:
-              summary: Notification Control Plane worker is down
+              summary: NotifyHub worker is down
               description: The worker target has not been scrapeable for 2 minutes.
 
           - alert: NotificationControlPlaneCallbackGatewayDown
@@ -129,7 +127,7 @@ data:
             labels:
               severity: critical
             annotations:
-              summary: Notification Control Plane callback gateway is down
+              summary: NotifyHub callback gateway is down
               description: The callback gateway target has not been scrapeable for 2 minutes.
 
           - alert: NotificationControlPlaneConnectorDown

@@ -1,4 +1,4 @@
-Notification Control Plane observability stack installed.
+NotifyHub observability stack installed.
 
 Services:
 - Prometheus: {{ include "notification-control-plane-observability.fullname" . }}-prometheus:9090

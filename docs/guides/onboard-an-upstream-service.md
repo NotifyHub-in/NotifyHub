@@ -4,10 +4,10 @@ This guide shows how any upstream application can start sending notifications th
 
 Examples of upstream services:
 
-- `communication-engine`
 - `billing-service`
 - `ops-service`
-- `afs-admin-service`
+- `payments-service`
+- `alerts-service`
 
 The integration is generic. The upstream service does not need to know provider-specific APIs.
 

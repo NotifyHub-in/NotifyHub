@@ -1004,7 +1004,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "Notification Control Plane Load Test",
+  "title": "NotifyHub Load Test",
   "uid": "notification-control-plane-load-test",
   "version": 4,
   "weekStart": ""

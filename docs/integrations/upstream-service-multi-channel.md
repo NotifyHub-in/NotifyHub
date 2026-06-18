@@ -1,20 +1,20 @@
-# Communication-Engine Multi-Channel Integration
+# Upstream Service Multi-Channel Integration
 
-This guide shows how `communication-engine` can integrate with the notification control plane across multiple channels:
+This guide shows how an upstream service can integrate with NotifyHub across multiple channels:
 
 - email
 - SMS
 - WhatsApp
 - push
 
-The control plane keeps the delivery mechanics. `communication-engine` keeps business intent, audience logic, and the event that triggered the notification.
+The control plane keeps the delivery mechanics. The upstream service keeps business intent, audience logic, and the event that triggered the notification.
 
 ## Big Picture
 
 ```mermaid
 flowchart LR
-    CE["communication-engine"]
-    API["Notification Control Plane API"]
+    APP["upstream service"]
+    API["NotifyHub API"]
     PG[(PostgreSQL)]
     K["Kafka"]
     W["Worker / reconciliation"]
@@ -22,10 +22,10 @@ flowchart LR
     SB["SMS bindings"]
     WB["WhatsApp bindings"]
     PB["Push bindings"]
-    CE1["Connector email"]
-    CE2["Connector sms"]
-    CE3["Connector whatsapp"]
-    CE4["Connector push"]
+    CONN1["Connector email"]
+    CONN2["Connector sms"]
+    CONN3["Connector whatsapp"]
+    CONN4["Connector push"]
     EP1["Email provider"]
     EP2["SMS provider"]
     EP3["WhatsApp provider"]
@@ -33,7 +33,7 @@ flowchart LR
     CB["Callback gateway"]
     VW["Lifecycle webhooks"]
 
-    CE --> API
+    APP --> API
     API --> PG
     API --> K
     K --> W
@@ -44,10 +44,10 @@ flowchart LR
     W --> WB
     W --> PB
 
-    EB --> CE1 --> EP1 --> CB
-    SB --> CE2 --> EP2 --> CB
-    WB --> CE3 --> EP3 --> CB
-    PB --> CE4 --> EP4 --> CB
+    EB --> CONN1 --> EP1 --> CB
+    SB --> CONN2 --> EP2 --> CB
+    WB --> CONN3 --> EP3 --> CB
+    PB --> CONN4 --> EP4 --> CB
 
     CB --> PG
     W --> VW
@@ -56,7 +56,7 @@ flowchart LR
 
 ## How The Integration Works
 
-`communication-engine` acts as the upstream application that decides:
+The upstream service acts as the upstream application that decides:
 
 - what business event happened
 - which notification should be sent
@@ -76,7 +76,7 @@ The control plane then decides:
 
 ### Email
 
-- `communication-engine` creates a notification request with `channels: ["email"]`
+- the upstream service creates a notification request with `channels: ["email"]`
 - the worker resolves the email binding set
 - the worker calls the email connector
 - the email connector talks to the external email provider
@@ -84,28 +84,31 @@ The control plane then decides:
 
 ### SMS
 
-- `communication-engine` creates a notification request with `channels: ["sms"]`
+- the upstream service creates a notification request with `channels: ["sms"]`
 - the worker resolves SMS bindings and provider order
 - the worker can fail over between multiple SMS providers if the bindings are configured that way
 - provider callbacks update request and attempt state
 
 ### WhatsApp
 
-- `communication-engine` creates a notification request with `channels: ["whatsapp"]`
+- the upstream service creates a notification request with `channels: ["whatsapp"]`
 - the control plane routes it the same way as the other channels
 - the worker sends it through a WhatsApp connector when that connector is wired into the deployment
 - callback handling is the same durable loop as the other channels
+- if the user replies to a WhatsApp message, the provider can send an inbound reply webhook back to the callback gateway
+- the callback gateway normalizes that reply into a generic channel event and emits a webhook to subscribed services
+  - the upstream service can subscribe to those inbound reply events if it wants to react to replies, hand off to support, or update a conversation record
 
 ### Push
 
-- `communication-engine` creates a notification request with `channels: ["push"]`
+- the upstream service creates a notification request with `channels: ["push"]`
 - the worker resolves push bindings and the selected binding set
 - the worker calls the push connector
 - the push provider returns acceptance or failure, and later callbacks update durable state
 
 ### Webhook
 
-- `communication-engine` can still emit notification-intent events that ultimately target webhook delivery
+- the upstream service can still emit notification-intent events that ultimately target webhook delivery
 - the worker calls the first-party webhook connector
 - the webhook connector posts the normalized payload to the customer-owned webhook URL
 - callback normalization happens through the same control-plane path when the provider exposes delivery lifecycle events
@@ -116,7 +119,7 @@ If a single channel has multiple providers, the control plane does **not** need 
 
 Instead:
 
-1. `communication-engine` sends one canonical notification request.
+1. the upstream service sends one canonical notification request.
 2. The request chooses the channel.
 3. The routing policy optionally chooses a binding set.
 4. The worker loads all provider bindings for that channel and binding set.
@@ -130,15 +133,15 @@ That means for SMS, for example, you can model:
 
 Those bindings can all belong to the same channel, and they can share or split binding sets depending on how you want traffic to flow.
 
-## Recommended Pattern For communication-engine
+## Recommended Pattern For Upstream Services
 
 The cleanest shape is:
 
-- `communication-engine` decides the business event and recipient
+- the upstream service decides the business event and recipient
 - the control plane decides delivery mechanics
 - channel-specific provider choice stays in provider bindings, not in the app
 
-That keeps provider changes out of `communication-engine`.
+That keeps provider changes out of `upstream service`.
 
 It also means you can:
 
@@ -148,7 +151,7 @@ It also means you can:
 
 ## Example Flow
 
-1. `communication-engine` emits a notification intent.
+1. the upstream service emits a notification intent.
 2. It sends the request to the control plane API.
 3. The API stores the request and queues the work.
 4. The worker resolves the target channel and binding set.
@@ -158,13 +161,14 @@ It also means you can:
 
 ## What You Should Configure
 
-For each channel you want `communication-engine` to use, configure the provider account once during onboarding or deployment:
+For each channel you want the upstream service to use, configure the provider account once during onboarding or deployment:
 
 - a routing policy
 - a binding set, if you want provider grouping
 - provider accounts for the channel
 - secret references stored securely in the control plane
 - callback verification settings, if the provider needs them
+- webhook subscriptions for lifecycle updates and inbound reply events, if client wants to consume them
 
 For example:
 
@@ -176,7 +180,7 @@ For example:
 
 ## Bottom Line
 
-`communication-engine` does not need to understand every provider.
+`upstream service` does not need to understand every provider.
 
 It only needs to speak the control-plane request model.
-The notification control plane then handles channel routing, provider onboarding, provider selection, retries, failover, callbacks, and observability.
+NotifyHub then handles channel routing, provider onboarding, provider selection, retries, failover, callbacks, and observability.

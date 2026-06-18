@@ -14,7 +14,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/Arunshaik2001/notification-control-plane/libs/core/config"
+	"github.com/NotifyHub-in/NotifyHub/libs/core/config"
 )
 
 type migrationFile struct {

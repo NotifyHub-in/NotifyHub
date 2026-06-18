@@ -409,3 +409,49 @@ type WebhookDeliveryAttempt struct {
 	CreatedAt      time.Time                    `json:"created_at"`
 	UpdatedAt      time.Time                    `json:"updated_at"`
 }
+
+type ChannelEventDirection string
+
+const (
+	ChannelEventDirectionInbound  ChannelEventDirection = "inbound"
+	ChannelEventDirectionOutbound ChannelEventDirection = "outbound"
+)
+
+type ChannelEventStatus string
+
+const (
+	ChannelEventStatusReceived  ChannelEventStatus = "received"
+	ChannelEventStatusProcessed ChannelEventStatus = "processed"
+	ChannelEventStatusFailed    ChannelEventStatus = "failed"
+)
+
+type ChannelEvent struct {
+	EventID           string                `json:"event_id"`
+	ProviderKey       string                `json:"provider_key"`
+	ProviderAccountID string                `json:"provider_account_id,omitempty"`
+	Channel           Channel               `json:"channel"`
+	Direction         ChannelEventDirection `json:"direction"`
+	EventType         string                `json:"event_type"`
+	Status            ChannelEventStatus    `json:"status"`
+	ExternalMessageID string                `json:"external_message_id,omitempty"`
+	ReplyToMessageID  string                `json:"reply_to_message_id,omitempty"`
+	ConversationID    string                `json:"conversation_id,omitempty"`
+	FromAddress       string                `json:"from_address,omitempty"`
+	ToAddress         string                `json:"to_address,omitempty"`
+	Body              string                `json:"body,omitempty"`
+	MediaType         string                `json:"media_type,omitempty"`
+	MediaURL          string                `json:"media_url,omitempty"`
+	MediaName         string                `json:"media_name,omitempty"`
+	Payload           map[string]any        `json:"payload,omitempty"`
+	Metadata          map[string]string     `json:"metadata,omitempty"`
+	ReceivedAt        time.Time             `json:"received_at"`
+	CreatedAt         time.Time             `json:"created_at"`
+	UpdatedAt         time.Time             `json:"updated_at"`
+}
+
+type ChannelWebhookEvent struct {
+	EventType string         `json:"event_type"`
+	Event     ChannelEvent   `json:"event"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	SentAt    time.Time      `json:"sent_at"`
+}

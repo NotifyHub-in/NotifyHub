@@ -1,6 +1,6 @@
-# Notification Control Plane Helm Chart
+# NotifyHub Helm Chart
 
-This chart packages the production deployment surface for the notification control plane:
+This chart packages the production deployment surface for the NotifyHub:
 
 - `api`
 - `worker`

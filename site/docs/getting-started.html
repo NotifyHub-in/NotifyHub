@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Getting started with NotifyHub." />
+    <title>Getting Started | NotifyHub</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="site-shell docs-page">
+      <header class="site-header">
+        <div class="header-inner">
+          <a class="brand" href="/">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-title">
+              <strong>NotifyHub</strong>
+              <span>Getting started</span>
+            </span>
+          </a>
+          <button class="mobile-toggle" type="button" data-mobile-toggle aria-expanded="false" aria-controls="site-nav">
+            Menu
+          </button>
+          <nav class="nav" id="site-nav" data-nav>
+            <a href="/docs/">Docs</a>
+            <a href="/docs/getting-started.html" aria-current="page">Getting started</a>
+            <a href="/docs/architecture.html">Architecture</a>
+            <a href="/docs/channels.html">Channels</a>
+            <a href="/docs/deployment.html">Deployment</a>
+          </nav>
+        </div>
+      </header>
+      <main>
+        <section class="page-hero">
+          <div class="page-inner">
+            <div class="surface">
+              <div class="breadcrumbs">
+                <a href="/">Home</a>
+                <span>·</span>
+                <a href="/docs/">Docs</a>
+                <span>·</span>
+                <span>Getting started</span>
+              </div>
+              <h1>How a client uses NotifyHub.</h1>
+              <p class="lede">A client registers once, sends canonical requests, and lets NotifyHub own routing, providers, callbacks, and retries.</p>
+            </div>
+          </div>
+        </section>
+        <section class="section">
+          <div class="page-inner prose">
+            <article class="surface" style="padding: 28px;">
+              <h2>1. Register the client</h2>
+              <p>Create a client identity and receive an API key. The client uses that key on every request.</p>
+              <pre class="code-block">POST /v1/clients
+{
+  "tenant_id": "tenant-a",
+  "client_name": "billing-service",
+  "allowed_channels": ["email", "sms", "whatsapp", "push", "webhook"]
+}</pre>
+            </article>
+            <article class="surface" style="padding: 28px;">
+              <h2>2. Send a canonical request</h2>
+              <p>Put the event, template key, channel list, recipient, and variables in one request. Do not include provider credentials.</p>
+              <pre class="code-block">POST /v1/notification-requests
+Authorization: Bearer &lt;api_key&gt;</pre>
+            </article>
+            <article class="surface" style="padding: 28px;">
+              <h2>3. Read lifecycle updates</h2>
+              <p>NotifyHub sends normalized delivery lifecycle events back to your system so you can update your own records.</p>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/app.js"></script>
+  </body>
+</html>
