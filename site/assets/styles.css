@@ -101,6 +101,7 @@ img {
 }
 
 .brand-mark {
+  position: relative;
   width: 48px;
   height: 48px;
   flex: 0 0 auto;
@@ -108,11 +109,24 @@ img {
   place-items: center;
 }
 
+.brand-mark::before {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 16px;
+  background: radial-gradient(circle, rgba(87, 225, 193, 0.2), rgba(124, 212, 255, 0.08) 48%, transparent 72%);
+  filter: blur(7px);
+  opacity: 0.85;
+}
+
 .brand-mark img {
+  position: relative;
+  z-index: 1;
   width: 48px;
   height: 48px;
   object-fit: contain;
   display: block;
+  filter: drop-shadow(0 0 1px rgba(209, 229, 247, 0.55)) drop-shadow(0 8px 16px rgba(0, 0, 0, 0.28));
 }
 
 .brand-title {
