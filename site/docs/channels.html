@@ -90,6 +90,13 @@
                     <p>OTP, receipts, password resets, and workflow notifications.</p>
                   </div>
                 </div>
+                <h3>End-to-end example</h3>
+                <ol class="channel-flow">
+                  <li><strong>1. Admin config</strong> Create a template for email, select a sender account, and define any callback route if the provider supports delivery webhooks.</li>
+                  <li><strong>2. Client request</strong> The client sends a notification request with <code>channels: ["email"]</code>, a template key, a recipient email, and variables.</li>
+                  <li><strong>3. Delivery</strong> The worker renders the template, sends the provider request, and stores the delivery attempt.</li>
+                  <li><strong>4. Callback</strong> Delivery updates return as normalized attempt status changes and can fan out to downstream webhook subscriptions.</li>
+                </ol>
               </article>
 
               <article id="sms" class="surface docs-section">
@@ -113,6 +120,13 @@
                     <p>Keep SMS bodies short, explicit, and template-driven. Use the request metadata for campaign or source tags, not provider internals.</p>
                   </div>
                 </div>
+                <h3>End-to-end example</h3>
+                <ol class="channel-flow">
+                  <li><strong>1. Admin config</strong> Create the SMS template, configure a provider account, and add the callback route if the provider posts delivery receipts.</li>
+                  <li><strong>2. Client request</strong> The client sends a notification request with <code>channels: ["sms"]</code>, a template key, a phone number, and language code.</li>
+                  <li><strong>3. Delivery</strong> The worker resolves the correct language template, chooses a healthy provider binding, and sends the SMS.</li>
+                  <li><strong>4. Callback</strong> The callback gateway normalizes the provider receipt and updates the delivery attempt status.</li>
+                </ol>
               </article>
 
               <article id="whatsapp" class="surface docs-section">
@@ -136,6 +150,13 @@
                     <p>Media support depends on the provider and the template metadata. The client still uses the same NotifyHub request model whether the payload is text, image, or video.</p>
                   </div>
                 </div>
+                <h3>End-to-end example</h3>
+                <ol class="channel-flow">
+                  <li><strong>1. Admin config</strong> Create the WhatsApp template, store the provider-specific template name and media metadata, and register the callback route.</li>
+                  <li><strong>2. Client request</strong> The client sends a notification request with <code>channels: ["whatsapp"]</code>, a template key, a phone number, and language code.</li>
+                  <li><strong>3. Delivery</strong> The worker resolves the template, applies the provider binding, and sends the WhatsApp message in the provider-compliant format.</li>
+                  <li><strong>4. Callback or reply</strong> Delivery receipts and inbound replies return through the callback gateway, are normalized, and are stored as channel events.</li>
+                </ol>
                 <pre class="code-block">POST /v1/notification-requests
 {
   "event_name": "login.otp",
@@ -168,6 +189,13 @@
                     <p>App notifications, passwordless login, delivery updates, and operational alerts.</p>
                   </div>
                 </div>
+                <h3>End-to-end example</h3>
+                <ol class="channel-flow">
+                  <li><strong>1. Admin config</strong> Mount the FCM service account or secret reference, create the push provider account, and keep the device token out of the provider config.</li>
+                  <li><strong>2. Client request</strong> The client sends a request with <code>channels: ["push"]</code>, a template key, and a device token.</li>
+                  <li><strong>3. Delivery</strong> The push connector loads the service account, builds the FCM payload, and records the provider response.</li>
+                  <li><strong>4. Follow-up</strong> Push usually ends with the provider response, but if the provider reports invalid tokens, the attempt is marked failed so the client can prune them.</li>
+                </ol>
               </article>
 
               <article id="webhook" class="surface docs-section">
@@ -183,6 +211,13 @@
                     <p>It lets another service observe what happened without connecting directly to provider-specific callback formats.</p>
                   </div>
                 </div>
+                <h3>End-to-end example</h3>
+                <ol class="channel-flow">
+                  <li><strong>1. Admin config</strong> Create a webhook subscription for the target system that should receive lifecycle events.</li>
+                  <li><strong>2. Client request</strong> The client sends a notification request through any supported channel.</li>
+                  <li><strong>3. Lifecycle event</strong> The control plane stores the request and delivery attempt data, then emits normalized lifecycle updates internally.</li>
+                  <li><strong>4. Webhook delivery</strong> The subscription receives the normalized event, independent of the original provider shape.</li>
+                </ol>
                 <div class="callout">
                   <strong>Integration tip</strong>
                   <span>Use webhook subscriptions when you want a separate system to mirror delivery state, audit trails, or analytics.</span>

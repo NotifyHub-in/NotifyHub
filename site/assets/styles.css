@@ -701,6 +701,18 @@ img {
   margin-bottom: 6px;
 }
 
+.channel-flow {
+  margin: 16px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  display: grid;
+  gap: 8px;
+}
+
+.channel-flow li strong {
+  color: var(--text);
+}
+
 .two-up {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
