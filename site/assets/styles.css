@@ -101,20 +101,16 @@ img {
 }
 
 .brand-mark {
-  width: 54px;
-  height: 54px;
+  width: 48px;
+  height: 48px;
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  border-radius: 15px;
-  background: linear-gradient(145deg, rgba(12, 28, 48, 0.96), rgba(6, 16, 29, 0.96));
-  border: 1px solid rgba(170, 187, 210, 0.12);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
 }
 
 .brand-mark img {
-  width: 46px;
-  height: 46px;
+  width: 48px;
+  height: 48px;
   object-fit: contain;
   display: block;
 }
@@ -179,7 +175,6 @@ img {
   text-transform: uppercase;
 }
 
-.hero h1,
 .section h2,
 .page-hero h1,
 .docs-card h3,
@@ -190,10 +185,12 @@ img {
 
 .hero h1 {
   margin: 18px 0 18px;
-  font-size: clamp(3.6rem, 5.5vw, 5.8rem);
-  line-height: 0.98;
-  letter-spacing: 0;
-  max-width: 10ch;
+  font-family: var(--sans);
+  font-size: clamp(3rem, 4.4vw, 4.8rem);
+  line-height: 1.04;
+  letter-spacing: -0.055em;
+  max-width: 12ch;
+  font-weight: 700;
 }
 
 .hero p,
@@ -297,8 +294,10 @@ img {
 }
 
 .hero-poster-frame {
-  min-height: 430px;
-  padding: 32px;
+  min-height: 340px;
+  max-height: 420px;
+  aspect-ratio: 1.55;
+  padding: clamp(22px, 3vw, 36px);
   border-radius: var(--radius-xl);
   background:
     radial-gradient(circle at 82% 18%, rgba(87, 225, 193, 0.2), transparent 26%),
@@ -326,7 +325,8 @@ img {
 .hero-poster {
   position: relative;
   z-index: 1;
-  width: min(100%, 680px);
+  width: min(86%, 620px);
+  max-height: 78%;
   height: auto;
   display: block;
   object-fit: contain;
@@ -1051,6 +1051,17 @@ th {
 
   .hero-panel {
     min-height: 420px;
+  }
+
+  .hero-poster-frame {
+    min-height: 260px;
+    max-height: none;
+    aspect-ratio: 1.35;
+  }
+
+  .hero-poster {
+    width: min(90%, 420px);
+    max-height: 82%;
   }
 
   .section-head {
