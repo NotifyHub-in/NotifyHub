@@ -101,12 +101,12 @@ img {
 }
 
 .brand-mark {
-  width: 38px;
-  height: 38px;
-  border-radius: 13px;
-  background:
-    linear-gradient(135deg, rgba(87, 225, 193, 1), rgba(124, 212, 255, 1));
-  box-shadow: 0 10px 30px rgba(87, 225, 193, 0.28);
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  background: url("notify-hub-logo.png") center / 135% auto no-repeat;
+  box-shadow: 0 12px 34px rgba(87, 225, 193, 0.18);
 }
 
 .brand-title {
@@ -150,7 +150,7 @@ img {
 
 .hero-inner {
   display: grid;
-  grid-template-columns: minmax(0, 1.12fr) minmax(300px, 0.88fr);
+  grid-template-columns: minmax(0, 0.95fr) minmax(360px, 1.05fr);
   gap: 28px;
   align-items: center;
 }
@@ -183,7 +183,7 @@ img {
   font-size: clamp(3.4rem, 7vw, 6.5rem);
   line-height: 0.94;
   letter-spacing: -0.05em;
-  max-width: 11ch;
+  max-width: 12ch;
 }
 
 .hero p,
@@ -247,8 +247,10 @@ img {
 .hero-panel {
   position: relative;
   overflow: hidden;
-  padding: 22px;
-  min-height: 540px;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  min-height: 430px;
 }
 
 .hero-panel::before,
@@ -262,19 +264,29 @@ img {
 }
 
 .hero-panel::before {
-  width: 210px;
-  height: 210px;
-  top: -40px;
-  right: -10px;
+  width: 260px;
+  height: 260px;
+  top: -60px;
+  right: -20px;
   background: radial-gradient(circle, rgba(87, 225, 193, 0.35), transparent 65%);
 }
 
 .hero-panel::after {
-  width: 280px;
-  height: 280px;
-  left: -40px;
-  bottom: -60px;
+  width: 320px;
+  height: 320px;
+  left: -80px;
+  bottom: -100px;
   background: radial-gradient(circle, rgba(124, 212, 255, 0.24), transparent 65%);
+}
+
+.hero-poster {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 620px);
+  height: auto;
+  display: block;
+  object-fit: contain;
+  filter: drop-shadow(0 24px 52px rgba(0, 0, 0, 0.34));
 }
 
 .panel-grid {
