@@ -101,23 +101,21 @@ img {
 }
 
 .brand-mark {
-  width: 58px;
-  height: 58px;
+  width: 54px;
+  height: 54px;
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  overflow: hidden;
-  border-radius: 16px;
-  background: #07111f;
+  border-radius: 15px;
+  background: linear-gradient(145deg, rgba(12, 28, 48, 0.96), rgba(6, 16, 29, 0.96));
   border: 1px solid rgba(170, 187, 210, 0.12);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
 }
 
 .brand-mark img {
-  width: 168px;
-  height: 112px;
-  object-fit: cover;
-  object-position: 50% 50%;
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
   display: block;
 }
 
