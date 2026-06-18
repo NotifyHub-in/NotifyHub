@@ -72,30 +72,76 @@
               <article id="diagram" class="surface docs-section">
                 <span class="eyebrow-inline">Request path</span>
                 <h2>What happens when a client sends a request</h2>
-                <div class="diagram-flow" aria-label="Notification request architecture flow">
-                  <div class="diagram-node">
-                    <strong>1. Client service</strong>
-                    <span>Submits a canonical notification request with a client API key.</span>
+                <svg class="architecture-svg" viewBox="0 0 1200 560" role="img" aria-labelledby="arch-title arch-desc">
+                  <title id="arch-title">NotifyHub request flow</title>
+                  <desc id="arch-desc">A left-to-right flow from client request to API, worker, connector, provider, callback gateway, and downstream webhooks.</desc>
+                  <defs>
+                    <linearGradient id="nodeFill" x1="0" x2="1">
+                      <stop offset="0%" stop-color="#102133" />
+                      <stop offset="100%" stop-color="#0d1a2a" />
+                    </linearGradient>
+                    <linearGradient id="accentFill" x1="0" x2="1">
+                      <stop offset="0%" stop-color="#57e1c1" />
+                      <stop offset="100%" stop-color="#7cd4ff" />
+                    </linearGradient>
+                    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+                      <path d="M0,0 L12,6 L0,12 Z" fill="#57e1c1" />
+                    </marker>
+                  </defs>
+
+                  <rect x="24" y="24" width="1152" height="512" rx="28" fill="rgba(255,255,255,0.02)" stroke="rgba(170,187,210,0.14)" />
+
+                  <rect x="56" y="84" width="220" height="96" rx="18" fill="url(#nodeFill)" stroke="rgba(87,225,193,0.4)" />
+                  <text x="78" y="118" fill="#f5f8fc" font-size="18" font-weight="700">Client service</text>
+                  <text x="78" y="146" fill="#a8b5c8" font-size="14">API key + canonical request</text>
+
+                  <rect x="318" y="84" width="220" height="96" rx="18" fill="url(#nodeFill)" stroke="rgba(124,212,255,0.38)" />
+                  <text x="340" y="118" fill="#f5f8fc" font-size="18" font-weight="700">Notification API</text>
+                  <text x="340" y="146" fill="#a8b5c8" font-size="14">Auth, validation, policy</text>
+
+                  <rect x="580" y="84" width="220" height="96" rx="18" fill="url(#nodeFill)" stroke="rgba(255,184,108,0.38)" />
+                  <text x="602" y="118" fill="#f5f8fc" font-size="18" font-weight="700">Kafka + worker</text>
+                  <text x="602" y="146" fill="#a8b5c8" font-size="14">Queue, claim, expand</text>
+
+                  <rect x="842" y="84" width="220" height="96" rx="18" fill="url(#nodeFill)" stroke="rgba(152,166,255,0.38)" />
+                  <text x="864" y="118" fill="#f5f8fc" font-size="18" font-weight="700">Connector + provider</text>
+                  <text x="864" y="146" fill="#a8b5c8" font-size="14">Provider wire format</text>
+
+                  <path d="M276 132 L318 132" stroke="#57e1c1" stroke-width="4" fill="none" marker-end="url(#arrow)" />
+                  <path d="M538 132 L580 132" stroke="#57e1c1" stroke-width="4" fill="none" marker-end="url(#arrow)" />
+                  <path d="M800 132 L842 132" stroke="#57e1c1" stroke-width="4" fill="none" marker-end="url(#arrow)" />
+
+                  <rect x="122" y="290" width="250" height="108" rx="18" fill="rgba(10,19,33,0.95)" stroke="rgba(87,225,193,0.22)" />
+                  <text x="144" y="324" fill="#f5f8fc" font-size="18" font-weight="700">Callback gateway</text>
+                  <text x="144" y="352" fill="#a8b5c8" font-size="14">Verify route, decode payload</text>
+                  <text x="144" y="374" fill="#a8b5c8" font-size="14">Update attempts and events</text>
+
+                  <rect x="474" y="290" width="250" height="108" rx="18" fill="rgba(10,19,33,0.95)" stroke="rgba(124,212,255,0.22)" />
+                  <text x="496" y="324" fill="#f5f8fc" font-size="18" font-weight="700">Lifecycle webhooks</text>
+                  <text x="496" y="352" fill="#a8b5c8" font-size="14">Forward normalized events</text>
+                  <text x="496" y="374" fill="#a8b5c8" font-size="14">No provider-specific format</text>
+
+                  <rect x="826" y="290" width="250" height="108" rx="18" fill="rgba(10,19,33,0.95)" stroke="rgba(255,184,108,0.22)" />
+                  <text x="848" y="324" fill="#f5f8fc" font-size="18" font-weight="700">Observability</text>
+                  <text x="848" y="352" fill="#a8b5c8" font-size="14">Prometheus, Grafana, logs</text>
+                  <text x="848" y="374" fill="#a8b5c8" font-size="14">Operational feedback loop</text>
+
+                  <path d="M948 180 C948 238 600 238 600 290" stroke="url(#accentFill)" stroke-width="4" fill="none" marker-end="url(#arrow)" />
+                  <path d="M372 344 L474 344" stroke="url(#accentFill)" stroke-width="4" fill="none" marker-end="url(#arrow)" />
+                  <path d="M724 344 L826 344" stroke="url(#accentFill)" stroke-width="4" fill="none" marker-end="url(#arrow)" />
+                </svg>
+                <div class="diagram-legend" aria-hidden="true">
+                  <div class="legend-item">
+                    <strong>Client boundary</strong>
+                    <span>The client never sees provider credentials or callback secrets.</span>
                   </div>
-                  <div class="diagram-arrow">↓</div>
-                  <div class="diagram-node">
-                    <strong>2. Notification API</strong>
-                    <span>Authenticates the request, validates fields, and resolves routing policy, templates, and preferences.</span>
+                  <div class="legend-item">
+                    <strong>Control plane</strong>
+                    <span>Routing, templates, policies, retries, and callbacks stay centralized.</span>
                   </div>
-                  <div class="diagram-arrow">↓</div>
-                  <div class="diagram-node">
-                    <strong>3. Kafka + worker</strong>
-                    <span>The request is queued, claimed by the worker, and expanded into channel-specific delivery attempts.</span>
-                  </div>
-                  <div class="diagram-arrow">↓</div>
-                  <div class="diagram-node">
-                    <strong>4. Connector + provider</strong>
-                    <span>The worker calls the provider connector, which translates the request into the provider-specific wire format.</span>
-                  </div>
-                  <div class="diagram-arrow">↓</div>
-                  <div class="diagram-node">
-                    <strong>5. Callback gateway + webhooks</strong>
-                    <span>Provider callbacks update the attempt state and can fan out as normalized lifecycle webhooks to downstream systems.</span>
+                  <div class="legend-item">
+                    <strong>Observability</strong>
+                    <span>Metrics and logs show request, delivery, and callback state separately.</span>
                   </div>
                 </div>
                 <div class="callout">

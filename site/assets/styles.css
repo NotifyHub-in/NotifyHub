@@ -667,6 +667,40 @@ img {
   margin-top: 18px;
 }
 
+.architecture-svg {
+  width: 100%;
+  height: auto;
+  margin-top: 18px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(170, 187, 210, 0.12);
+  background: linear-gradient(180deg, rgba(7, 16, 28, 0.95), rgba(10, 19, 33, 0.98));
+}
+
+.diagram-caption {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.diagram-legend {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.legend-item {
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(170, 187, 210, 0.1);
+}
+
+.legend-item strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
 .two-up {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
