@@ -14,7 +14,7 @@
     <div class="site-shell docs-page">
       <header class="site-header">
         <div class="header-inner">
-          <a class="brand" href="../">
+          <a class="brand" href="../index.html">
             <span class="brand-mark" aria-hidden="true"></span>
             <span class="brand-title">
               <strong>NotifyHub</strong>
@@ -25,52 +25,75 @@
             Menu
           </button>
           <nav class="nav" id="site-nav" data-nav>
-            <a href="./">Docs</a>
-            <a href="getting-started.html">Getting started</a>
-            <a href="architecture.html">Architecture</a>
-            <a href="channels.html">Channels</a>
-            <a href="deployment.html" aria-current="page">Deployment</a>
+            <a href="./index.html">Docs</a>
+            <a href="./getting-started.html">Getting started</a>
+            <a href="./architecture.html">Architecture</a>
+            <a href="./channels.html">Channels</a>
+            <a href="./deployment.html" aria-current="page">Deployment</a>
           </nav>
         </div>
       </header>
+
       <main>
         <section class="page-hero">
           <div class="page-inner">
-            <div class="surface">
+            <div class="surface docs-section">
               <div class="breadcrumbs">
-                <a href="../">Home</a>
+                <a href="../index.html">Home</a>
                 <span>·</span>
-                <a href="./">Docs</a>
+                <a href="./index.html">Docs</a>
                 <span>·</span>
                 <span>Deployment</span>
               </div>
+              <span class="eyebrow-inline">Operations</span>
               <h1>Ship it anywhere you can run containers.</h1>
-              <p class="lede">The repo already includes local Docker Compose, Kubernetes, and AWS EKS guidance. This site gives you the entry points and the production shape.</p>
+              <p class="lede">The repo includes local Docker Compose, Kubernetes, and AWS EKS guidance. This page points you to the production shape and the safe shutdown path.</p>
             </div>
           </div>
         </section>
+
         <section class="section">
-          <div class="page-inner">
-            <div class="step-grid">
-              <article class="timeline-step surface">
-                <div class="index">1</div>
-                <h3>Local stack</h3>
+          <div class="page-grid">
+            <aside class="docs-sidebar">
+              <span class="eyebrow-inline">Runbook</span>
+              <nav aria-label="Deployment sections">
+                <a href="#local">Local stack</a>
+                <a href="#k8s">Kubernetes</a>
+                <a href="#aws">AWS EKS</a>
+                <a href="#rollback">Rollback</a>
+              </nav>
+            </aside>
+
+            <div class="docs-main">
+              <article id="local" class="surface docs-section">
+                <span class="eyebrow-inline">1</span>
+                <h2>Local stack</h2>
                 <p>Use Docker Compose for rapid iteration and provider-safe smoke tests.</p>
+                <pre class="code-block">docker compose up -d
+docker compose logs -f api worker</pre>
               </article>
-              <article class="timeline-step surface">
-                <div class="index">2</div>
-                <h3>Kubernetes</h3>
-                <p>Deploy the app namespace, observability namespace, and exporters as separate concerns.</p>
+
+              <article id="k8s" class="surface docs-section">
+                <span class="eyebrow-inline">2</span>
+                <h2>Kubernetes</h2>
+                <p>Deploy the app namespace, observability namespace, and exporters as separate concerns so the runtime stays easy to manage.</p>
               </article>
-              <article class="timeline-step surface">
-                <div class="index">3</div>
-                <h3>AWS EKS</h3>
+
+              <article id="aws" class="surface docs-section">
+                <span class="eyebrow-inline">3</span>
+                <h2>AWS EKS</h2>
                 <p>Use the AWS runbooks for a fresh cluster, ECR images, and production-shaped smoke testing.</p>
               </article>
-              <article class="timeline-step surface">
-                <div class="index">4</div>
-                <h3>Rollback</h3>
-                <p>Every guide includes a rollback or shutdown path so the system remains operable.</p>
+
+              <article id="rollback" class="surface docs-section">
+                <span class="eyebrow-inline">4</span>
+                <h2>Rollback and shutdown</h2>
+                <p>Every guide should include a rollback or shutdown path so the system remains operable and easy to stop safely.</p>
+                <div class="docs-nav-inline">
+                  <a href="./getting-started.html">Onboarding</a>
+                  <a href="./architecture.html">Architecture</a>
+                  <a href="./channels.html">Channels</a>
+                </div>
               </article>
             </div>
           </div>

@@ -14,7 +14,7 @@
     <div class="site-shell docs-page">
       <header class="site-header">
         <div class="header-inner">
-          <a class="brand" href="../">
+          <a class="brand" href="../index.html">
             <span class="brand-mark" aria-hidden="true"></span>
             <span class="brand-title">
               <strong>NotifyHub</strong>
@@ -25,52 +25,120 @@
             Menu
           </button>
           <nav class="nav" id="site-nav" data-nav>
-            <a href="./">Docs</a>
-            <a href="getting-started.html">Getting started</a>
-            <a href="architecture.html" aria-current="page">Architecture</a>
-            <a href="channels.html">Channels</a>
-            <a href="deployment.html">Deployment</a>
+            <a href="./index.html">Docs</a>
+            <a href="./getting-started.html">Getting started</a>
+            <a href="./architecture.html" aria-current="page">Architecture</a>
+            <a href="./channels.html">Channels</a>
+            <a href="./deployment.html">Deployment</a>
           </nav>
         </div>
       </header>
+
       <main>
         <section class="page-hero">
           <div class="page-inner">
-            <div class="surface">
+            <div class="surface docs-section">
               <div class="breadcrumbs">
-                <a href="../">Home</a>
+                <a href="../index.html">Home</a>
                 <span>·</span>
-                <a href="./">Docs</a>
+                <a href="./index.html">Docs</a>
                 <span>·</span>
                 <span>Architecture</span>
               </div>
+              <span class="eyebrow-inline">System design</span>
               <h1>Built like a control plane, not a handoff script.</h1>
               <p class="lede">Requests enter once, get normalized, and move through policy, templates, routing, dispatch, callbacks, and observability.</p>
             </div>
           </div>
         </section>
+
         <section class="section">
-          <div class="page-inner">
-            <div class="docs-grid">
-              <article class="docs-card surface">
+          <div class="page-grid">
+            <aside class="docs-sidebar">
+              <span class="eyebrow-inline">Overview</span>
+              <nav aria-label="Architecture sections">
+                <a href="#ingress">Ingress</a>
+                <a href="#policy">Policy resolution</a>
+                <a href="#execution">Execution</a>
+                <a href="#callbacks">Callbacks</a>
+                <a href="#observability">Observability</a>
+              </nav>
+            </aside>
+
+            <div class="docs-main">
+              <article id="ingress" class="surface docs-section">
                 <span class="eyebrow-inline">Ingress</span>
-                <h3>API + Kafka</h3>
+                <h2>API + Kafka</h2>
                 <p>The API validates and persists requests, then hands delivery orchestration to the worker through Kafka.</p>
+                <div class="callout">
+                  <strong>Principle</strong>
+                  <span>The upstream service stays generic. Provider-specific behavior remains inside NotifyHub.</span>
+                </div>
               </article>
-              <article class="docs-card surface">
+
+              <article id="policy" class="surface docs-section">
+                <span class="eyebrow-inline">Resolution</span>
+                <h2>Policy decides how the event behaves</h2>
+                <div class="two-up">
+                  <div>
+                    <h3>Templates</h3>
+                    <p>Template selection can vary by channel, language, and client policy.</p>
+                  </div>
+                  <div>
+                    <h3>Preferences</h3>
+                    <p>User preferences gate which channels are eligible before dispatch begins.</p>
+                  </div>
+                  <div>
+                    <h3>Bindings</h3>
+                    <p>Bindings connect a logical event to the right channel and provider configuration.</p>
+                  </div>
+                  <div>
+                    <h3>Retry policy</h3>
+                    <p>Retries and fallback paths stay declarative, not hardcoded in the client.</p>
+                  </div>
+                </div>
+              </article>
+
+              <article id="execution" class="surface docs-section">
                 <span class="eyebrow-inline">Execution</span>
-                <h3>Worker + Connectors</h3>
+                <h2>Worker + connectors dispatch the message</h2>
                 <p>The worker resolves templates, preferences, and bindings before dispatching through the relevant connector.</p>
+                <pre class="code-block">client request -> api -> kafka -> worker -> connector -> provider</pre>
               </article>
-              <article class="docs-card surface">
+
+              <article id="callbacks" class="surface docs-section">
                 <span class="eyebrow-inline">Return path</span>
-                <h3>Callbacks</h3>
-                <p>Provider delivery updates and inbound replies come back through the callback gateway and become durable events.</p>
+                <h2>Callbacks and replies come back through the same control plane</h2>
+                <p>Provider delivery updates and inbound replies are normalized into durable events, then stored and optionally forwarded to subscribed systems.</p>
               </article>
-              <article class="docs-card surface">
+
+              <article id="observability" class="surface docs-section">
                 <span class="eyebrow-inline">Operations</span>
-                <h3>Metrics and logs</h3>
-                <p>Prometheus, Grafana, Kafka UI, and Adminer sit beside the runtime so teams can debug with real signals.</p>
+                <h2>Metrics and logs stay beside the runtime</h2>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Component</th>
+                        <th>What to watch</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>API</td>
+                        <td>Request rate, auth failures, validation failures</td>
+                      </tr>
+                      <tr>
+                        <td>Worker</td>
+                        <td>Delivery latency, retries, provider failures</td>
+                      </tr>
+                      <tr>
+                        <td>Connectors</td>
+                        <td>Provider response codes, transport errors</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </article>
             </div>
           </div>

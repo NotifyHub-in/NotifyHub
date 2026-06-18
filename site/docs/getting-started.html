@@ -14,7 +14,7 @@
     <div class="site-shell docs-page">
       <header class="site-header">
         <div class="header-inner">
-          <a class="brand" href="../">
+          <a class="brand" href="../index.html">
             <span class="brand-mark" aria-hidden="true"></span>
             <span class="brand-title">
               <strong>NotifyHub</strong>
@@ -25,52 +25,113 @@
             Menu
           </button>
           <nav class="nav" id="site-nav" data-nav>
-            <a href="./">Docs</a>
-            <a href="getting-started.html" aria-current="page">Getting started</a>
-            <a href="architecture.html">Architecture</a>
-            <a href="channels.html">Channels</a>
-            <a href="deployment.html">Deployment</a>
+            <a href="./index.html">Docs</a>
+            <a href="./getting-started.html" aria-current="page">Getting started</a>
+            <a href="./architecture.html">Architecture</a>
+            <a href="./channels.html">Channels</a>
+            <a href="./deployment.html">Deployment</a>
           </nav>
         </div>
       </header>
+
       <main>
         <section class="page-hero">
           <div class="page-inner">
-            <div class="surface">
+            <div class="surface docs-section">
               <div class="breadcrumbs">
-                <a href="../">Home</a>
+                <a href="../index.html">Home</a>
                 <span>·</span>
-                <a href="./">Docs</a>
+                <a href="./index.html">Docs</a>
                 <span>·</span>
                 <span>Getting started</span>
               </div>
+              <span class="eyebrow-inline">Onboarding</span>
               <h1>How a client uses NotifyHub.</h1>
-              <p class="lede">A client registers once, sends canonical requests, and lets NotifyHub own routing, providers, callbacks, and retries.</p>
+              <p class="lede">
+                A client registers once, sends canonical requests, and lets NotifyHub own routing, providers, callbacks, and retries.
+              </p>
             </div>
           </div>
         </section>
+
         <section class="section">
-          <div class="page-inner prose">
-            <article class="surface" style="padding: 28px;">
-              <h2>1. Register the client</h2>
-              <p>Create a client identity and receive an API key. The client uses that key on every request.</p>
-              <pre class="code-block">POST /v1/clients
+          <div class="page-grid">
+            <aside class="docs-sidebar">
+              <span class="eyebrow-inline">In this guide</span>
+              <nav aria-label="Guide contents">
+                <a href="#register">1. Register the client</a>
+                <a href="#send">2. Send a canonical request</a>
+                <a href="#callbacks">3. Consume lifecycle updates</a>
+                <a href="#prefs">4. Apply preferences and policy</a>
+                <a href="#next">Next steps</a>
+              </nav>
+            </aside>
+
+            <div class="docs-main">
+              <article id="register" class="surface docs-section">
+                <span class="eyebrow-inline">Step 1</span>
+                <h2>Register the client</h2>
+                <p>Create a client identity and receive an API key. The client uses that key on every request.</p>
+                <pre class="code-block">POST /v1/clients
 {
   "tenant_id": "tenant-a",
   "client_name": "billing-service",
   "allowed_channels": ["email", "sms", "whatsapp", "push", "webhook"]
 }</pre>
-            </article>
-            <article class="surface" style="padding: 28px;">
-              <h2>2. Send a canonical request</h2>
-              <p>Put the event, template key, channel list, recipient, and variables in one request. Do not include provider credentials.</p>
-              <pre class="code-block">POST /v1/notification-requests
-Authorization: Bearer &lt;api_key&gt;</pre>
-            </article>
-            <article class="surface" style="padding: 28px;">
-              <h2>3. Read lifecycle updates</h2>
-              <p>NotifyHub sends normalized delivery lifecycle events back to your system so you can update your own records.</p>
-            </article>
+              </article>
+
+              <article id="send" class="surface docs-section">
+                <span class="eyebrow-inline">Step 2</span>
+                <h2>Send a canonical request</h2>
+                <p>Send the event name, template key, recipients, channel list, and render variables in one request. Do not include provider credentials.</p>
+                <pre class="code-block">POST /v1/notification-requests
+Authorization: Bearer &lt;api_key&gt;
+{
+  "client_id": "client_123",
+  "event_key": "login_otp",
+  "template_key": "farm_login_otp_wa_v2",
+  "channel": "whatsapp",
+  "recipient": { "phone": "+918700491033" },
+  "variables": { "otp": "123456" }
+}</pre>
+              </article>
+
+              <article id="callbacks" class="surface docs-section">
+                <span class="eyebrow-inline">Step 3</span>
+                <h2>Consume lifecycle updates</h2>
+                <p>NotifyHub emits normalized lifecycle events back to your system so you can update your own records and dashboards.</p>
+                <div class="callout">
+                  <strong>Design rule</strong>
+                  <span>Keep callbacks generic: treat each delivery status as a normalized event, not a provider-specific payload.</span>
+                </div>
+              </article>
+
+              <article id="prefs" class="surface docs-section">
+                <span class="eyebrow-inline">Step 4</span>
+                <h2>Apply preferences and policy</h2>
+                <div class="two-up">
+                  <div>
+                    <h3>Preferences</h3>
+                    <p>User preferences filter which channels are eligible before dispatch.</p>
+                  </div>
+                  <div>
+                    <h3>Policies</h3>
+                    <p>Policies decide provider selection, fallback order, template language, and retry behavior.</p>
+                  </div>
+                </div>
+              </article>
+
+              <article id="next" class="surface docs-section">
+                <span class="eyebrow-inline">Next</span>
+                <h2>Move to architecture</h2>
+                <p>After onboarding, review the architecture guide to see how the API, worker, connectors, and callbacks fit together.</p>
+                <div class="docs-nav-inline">
+                  <a href="./architecture.html">Architecture</a>
+                  <a href="./channels.html">Channels</a>
+                  <a href="./deployment.html">Deployment</a>
+                </div>
+              </article>
+            </div>
           </div>
         </section>
       </main>

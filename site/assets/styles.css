@@ -514,6 +514,202 @@ img {
   padding-top: 24px;
 }
 
+.mobile-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+}
+
+.page-grid {
+  width: min(var(--max-width), calc(100vw - 32px));
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 20px;
+}
+
+.docs-sidebar {
+  position: sticky;
+  top: calc(var(--header-height) + 20px);
+  align-self: start;
+  padding: 18px;
+  border-radius: var(--radius-xl);
+  background: rgba(10, 19, 33, 0.9);
+  border: 1px solid rgba(170, 187, 210, 0.12);
+  box-shadow: var(--shadow);
+}
+
+.docs-sidebar h2,
+.docs-section h2 {
+  margin-top: 0;
+}
+
+.docs-sidebar nav {
+  display: grid;
+  gap: 8px;
+}
+
+.docs-sidebar a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  color: var(--muted);
+  border: 1px solid transparent;
+}
+
+.docs-sidebar a[aria-current="page"],
+.docs-sidebar a:hover {
+  color: var(--text);
+  background: rgba(87, 225, 193, 0.08);
+  border-color: rgba(87, 225, 193, 0.18);
+}
+
+.docs-main {
+  display: grid;
+  gap: 20px;
+}
+
+.docs-section,
+.docs-callout,
+.docs-card.surface,
+.feature.surface,
+.channel.surface,
+.timeline-step.surface {
+  backdrop-filter: blur(8px);
+}
+
+.docs-section {
+  padding: 28px;
+}
+
+.docs-section h2 {
+  margin-bottom: 12px;
+}
+
+.docs-section p:last-child {
+  margin-bottom: 0;
+}
+
+.callout {
+  display: grid;
+  gap: 8px;
+  padding: 18px 20px;
+  border-radius: var(--radius-lg);
+  background: rgba(87, 225, 193, 0.08);
+  border: 1px solid rgba(87, 225, 193, 0.18);
+  color: var(--text);
+}
+
+.callout strong {
+  font-size: 1rem;
+}
+
+.code-block {
+  margin: 18px 0 0;
+  padding: 18px;
+  border-radius: var(--radius-lg);
+  overflow-x: auto;
+  border: 1px solid rgba(170, 187, 210, 0.12);
+  background: #07101c;
+  color: #d8e7f9;
+  line-height: 1.65;
+  font-size: 0.95rem;
+}
+
+.two-up {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.stack {
+  display: grid;
+  gap: 16px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(170, 187, 210, 0.12);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: rgba(10, 19, 33, 0.92);
+}
+
+th,
+td {
+  text-align: left;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(170, 187, 210, 0.12);
+}
+
+th {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+td {
+  color: var(--muted);
+}
+
+.footer {
+  padding: 28px 0 42px;
+}
+
+.footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.94rem;
+  padding-top: 18px;
+  border-top: 1px solid rgba(170, 187, 210, 0.12);
+}
+
+.footer a {
+  color: var(--text);
+}
+
+.docs-nav-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.docs-nav-inline a {
+  padding: 8px 12px;
+  border: 1px solid rgba(170, 187, 210, 0.14);
+  border-radius: 999px;
+  color: var(--muted);
+}
+
+.docs-nav-inline a:hover,
+.docs-nav-inline a[aria-current="page"] {
+  color: var(--text);
+  border-color: rgba(87, 225, 193, 0.2);
+  background: rgba(87, 225, 193, 0.08);
+}
+
+.hero-copy h1,
+.page-hero h1 {
+  text-wrap: balance;
+}
+
 .prose {
   display: grid;
   gap: 16px;
@@ -658,7 +854,9 @@ th {
   .hero-inner,
   .features-grid,
   .channel-grid,
-  .step-grid {
+  .step-grid,
+  .two-up,
+  .page-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -668,6 +866,10 @@ th {
 
   .hero h1 {
     max-width: 13ch;
+  }
+
+  .docs-sidebar {
+    position: static;
   }
 }
 
@@ -711,6 +913,23 @@ th {
 
   .section-head {
     align-items: start;
+    flex-direction: column;
+  }
+
+  .page-grid,
+  .two-up,
+  .docs-grid,
+  .features-grid,
+  .channel-grid,
+  .step-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .docs-sidebar {
+    position: static;
+  }
+
+  .footer-inner {
     flex-direction: column;
   }
 }

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="NotifyHub page not found." />
+    <title>Page not found | NotifyHub</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./assets/styles.css" />
+    <script>
+      (function () {
+        const routes = new Map([
+          ["/", "/"],
+          ["/index.html", "/"],
+          ["/docs", "/docs/index.html"],
+          ["/docs/", "/docs/index.html"],
+          ["/docs/index.html", "/docs/index.html"],
+          ["/docs/getting-started", "/docs/getting-started.html"],
+          ["/docs/getting-started/", "/docs/getting-started.html"],
+          ["/docs/getting-started.html", "/docs/getting-started.html"],
+          ["/docs/architecture", "/docs/architecture.html"],
+          ["/docs/architecture/", "/docs/architecture.html"],
+          ["/docs/architecture.html", "/docs/architecture.html"],
+          ["/docs/channels", "/docs/channels.html"],
+          ["/docs/channels/", "/docs/channels.html"],
+          ["/docs/channels.html", "/docs/channels.html"],
+          ["/docs/deployment", "/docs/deployment.html"],
+          ["/docs/deployment/", "/docs/deployment.html"],
+          ["/docs/deployment.html", "/docs/deployment.html"],
+        ]);
+
+        const path = window.location.pathname.replace(/\/+$/, window.location.pathname.endsWith("/") ? "/" : "");
+        const target = routes.get(path);
+        if (target && target !== path) {
+          window.location.replace(target + window.location.search + window.location.hash);
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div class="site-shell docs-page">
+      <main>
+        <section class="page-hero">
+          <div class="page-inner">
+            <div class="surface docs-section">
+              <span class="eyebrow-inline">404</span>
+              <h1>That page does not exist.</h1>
+              <p class="lede">Use the docs navigation below, or jump straight back to the homepage.</p>
+              <div class="docs-nav-inline">
+                <a href="./index.html">Home</a>
+                <a href="./docs/index.html">Docs</a>
+                <a href="./docs/getting-started.html">Getting started</a>
+                <a href="./docs/architecture.html">Architecture</a>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
