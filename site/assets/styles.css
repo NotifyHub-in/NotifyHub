@@ -250,6 +250,10 @@ img {
   color: #04121b;
 }
 
+.button-primary:hover {
+  color: #ffffff;
+}
+
 .button-secondary {
   background: rgba(255, 255, 255, 0.03);
   border-color: var(--line);
