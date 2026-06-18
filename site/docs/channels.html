@@ -30,6 +30,7 @@
             <a href="./architecture.html">Architecture</a>
             <a href="./channels.html" aria-current="page">Channels</a>
             <a href="./deployment.html">Deployment</a>
+            <a href="./admin.html">Admin API</a>
           </nav>
         </div>
       </header>
@@ -46,34 +47,146 @@
                 <span>Channels</span>
               </div>
               <span class="eyebrow-inline">Delivery guide</span>
-              <h1>Five channels, one request model.</h1>
-              <p class="lede">Email, SMS, WhatsApp, push, and webhook all use the same platform contract and differ only in routing and provider configuration.</p>
+              <h1>Each channel shares the same contract, but the delivery path differs.</h1>
+              <p class="lede">
+                These sections explain what the client sends, what the worker resolves, what the connector sends, and what comes back through callbacks.
+              </p>
             </div>
           </div>
         </section>
 
         <section class="section">
-          <div class="page-inner">
-            <div class="channel-grid">
-              <article class="channel surface">
+          <div class="page-grid">
+            <aside class="docs-sidebar">
+              <span class="eyebrow-inline">Channels</span>
+              <nav aria-label="Channel sections">
+                <a href="#email">Email</a>
+                <a href="#sms">SMS</a>
+                <a href="#whatsapp">WhatsApp</a>
+                <a href="#push">Push</a>
+                <a href="#webhook">Webhook</a>
+              </nav>
+            </aside>
+
+            <div class="docs-main">
+              <article id="email" class="surface docs-section">
                 <span class="eyebrow-inline">Email</span>
-                <h3>Transactional and lifecycle mail</h3>
-                <p>Templates render subject and body, and provider callbacks reconcile delivery status when supported.</p>
+                <h2>Transactional email</h2>
+                <div class="two-up">
+                  <div>
+                    <h3>What the client sends</h3>
+                    <p>A template key, recipient email, variables, and a channel list that includes email.</p>
+                  </div>
+                  <div>
+                    <h3>What the platform does</h3>
+                    <p>Looks up the email template, renders subject and body, picks a provider binding, and records the delivery attempt.</p>
+                  </div>
+                  <div>
+                    <h3>Callback behavior</h3>
+                    <p>Email providers that support delivery callbacks mark the delivery attempt delivered or failed; providers without callbacks still work.</p>
+                  </div>
+                  <div>
+                    <h3>Common use case</h3>
+                    <p>OTP, receipts, password resets, and workflow notifications.</p>
+                  </div>
+                </div>
               </article>
-              <article class="channel surface">
+
+              <article id="sms" class="surface docs-section">
                 <span class="eyebrow-inline">SMS</span>
-                <h3>OTP and alerts</h3>
-                <p>Supports multilingual templates and provider pools such as Gupshup or Karix.</p>
+                <h2>OTP and short alerts</h2>
+                <div class="two-up">
+                  <div>
+                    <h3>Template and language</h3>
+                    <p>SMS templates can have language-specific variants. The control plane falls back to English when a requested language is missing.</p>
+                  </div>
+                  <div>
+                    <h3>Provider support</h3>
+                    <p>The same channel can use Gupshup or Karix bindings. Provider credentials stay inside provider accounts and secret refs.</p>
+                  </div>
+                  <div>
+                    <h3>Callback behavior</h3>
+                    <p>Provider delivery callbacks update the delivery attempt status. Unsupported callback shapes are normalized in the gateway before they reach storage.</p>
+                  </div>
+                  <div>
+                    <h3>Best practice</h3>
+                    <p>Keep SMS bodies short, explicit, and template-driven. Use the request metadata for campaign or source tags, not provider internals.</p>
+                  </div>
+                </div>
               </article>
-              <article class="channel surface">
+
+              <article id="whatsapp" class="surface docs-section">
                 <span class="eyebrow-inline">WhatsApp</span>
-                <h3>Media, templates, and replies</h3>
-                <p>Delivery callbacks and inbound replies are normalized into the same control-plane event model.</p>
+                <h2>Templates, media, and replies</h2>
+                <div class="two-up">
+                  <div>
+                    <h3>What the client sends</h3>
+                    <p>Send the WhatsApp channel plus the template key and language code. If media is involved, the template metadata in the control plane defines the media type and provider-specific template name.</p>
+                  </div>
+                  <div>
+                    <h3>What the platform does</h3>
+                    <p>Resolves the template, chooses the provider binding, and sends a provider-compliant request shape without exposing provider details to the client service.</p>
+                  </div>
+                  <div>
+                    <h3>Replies and inbound messages</h3>
+                    <p>Inbound messages are treated as channel events. They are stored in the control plane and can be forwarded to downstream systems as normalized lifecycle events.</p>
+                  </div>
+                  <div>
+                    <h3>Media handling</h3>
+                    <p>Media support depends on the provider and the template metadata. The client still uses the same NotifyHub request model whether the payload is text, image, or video.</p>
+                  </div>
+                </div>
+                <pre class="code-block">POST /v1/notification-requests
+{
+  "event_name": "login.otp",
+  "template_key": "farm_login_otp_wa_v2",
+  "language_code": "en",
+  "channels": ["whatsapp"],
+  "recipient": { "phone": "+918700491033" },
+  "variables": { "otp": "123456" }
+}</pre>
               </article>
-              <article class="channel surface">
+
+              <article id="push" class="surface docs-section">
                 <span class="eyebrow-inline">Push</span>
-                <h3>FCM-backed notifications</h3>
-                <p>FCM service accounts stay mounted as secrets while the request only carries the device token.</p>
+                <h2>FCM-backed push notifications</h2>
+                <div class="two-up">
+                  <div>
+                    <h3>What the client sends</h3>
+                    <p>Device token, template key, variables, and channel. The FCM service account is resolved by the connector from mounted secrets or secret references.</p>
+                  </div>
+                  <div>
+                    <h3>What the platform does</h3>
+                    <p>The push connector loads the service account, builds the FCM message, and stores the delivery attempt with the provider response.</p>
+                  </div>
+                  <div>
+                    <h3>Invalid token handling</h3>
+                    <p>Invalid or expired tokens should be treated as failed attempts and surfaced in the delivery record so the client can prune them.</p>
+                  </div>
+                  <div>
+                    <h3>Typical use case</h3>
+                    <p>App notifications, passwordless login, delivery updates, and operational alerts.</p>
+                  </div>
+                </div>
+              </article>
+
+              <article id="webhook" class="surface docs-section">
+                <span class="eyebrow-inline">Webhook</span>
+                <h2>Notify downstream systems with lifecycle events</h2>
+                <div class="two-up">
+                  <div>
+                    <h3>Outbound webhook</h3>
+                    <p>Webhook subscriptions receive normalized events such as accepted, delivered, failed, or replayed notifications.</p>
+                  </div>
+                  <div>
+                    <h3>Why it exists</h3>
+                    <p>It lets another service observe what happened without connecting directly to provider-specific callback formats.</p>
+                  </div>
+                </div>
+                <div class="callout">
+                  <strong>Integration tip</strong>
+                  <span>Use webhook subscriptions when you want a separate system to mirror delivery state, audit trails, or analytics.</span>
+                </div>
               </article>
             </div>
           </div>

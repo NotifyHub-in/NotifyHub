@@ -299,14 +299,16 @@ img {
 
 .metric {
   min-height: 150px;
-  padding: 18px;
+  padding: 18px 18px 52px;
+  display: flex;
+  flex-direction: column;
 }
 
 .metric strong {
   display: block;
   font-size: 1.9rem;
   letter-spacing: -0.03em;
-  margin-top: 24px;
+  margin-top: 18px;
 }
 
 .metric span,
@@ -625,6 +627,10 @@ img {
   color: #d8e7f9;
   line-height: 1.65;
   font-size: 0.95rem;
+}
+
+.code-block.compact {
+  margin-top: 12px;
 }
 
 .two-up {

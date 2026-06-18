@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="NotifyHub admin operations guide." />
+    <title>Admin API | NotifyHub</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="../assets/styles.css" />
+  </head>
+  <body>
+    <div class="site-shell docs-page">
+      <header class="site-header">
+        <div class="header-inner">
+          <a class="brand" href="../index.html">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-title">
+              <strong>NotifyHub</strong>
+              <span>Admin API</span>
+            </span>
+          </a>
+          <button class="mobile-toggle" type="button" data-mobile-toggle aria-expanded="false" aria-controls="site-nav">
+            Menu
+          </button>
+          <nav class="nav" id="site-nav" data-nav>
+            <a href="./index.html">Docs</a>
+            <a href="./getting-started.html">Getting started</a>
+            <a href="./architecture.html">Architecture</a>
+            <a href="./channels.html">Channels</a>
+            <a href="./deployment.html">Deployment</a>
+            <a href="./admin.html" aria-current="page">Admin API</a>
+          </nav>
+        </div>
+      </header>
+
+      <main>
+        <section class="page-hero">
+          <div class="page-inner">
+            <div class="surface docs-section">
+              <div class="breadcrumbs">
+                <a href="../index.html">Home</a>
+                <span>·</span>
+                <a href="./index.html">Docs</a>
+                <span>·</span>
+                <span>Admin API</span>
+              </div>
+              <span class="eyebrow-inline">Provisioning</span>
+              <h1>Use the admin key to create and update platform data.</h1>
+              <p class="lede">
+                The admin API is for operators and automation. Clients should use their own API key only for sending notification requests.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="page-grid">
+            <aside class="docs-sidebar">
+              <span class="eyebrow-inline">Reference</span>
+              <nav aria-label="Admin sections">
+                <a href="#auth">Authentication</a>
+                <a href="#clients">Client onboarding</a>
+                <a href="#providers">Providers and secrets</a>
+                <a href="#policies">Policies and templates</a>
+                <a href="#subscriptions">Webhook subscriptions</a>
+              </nav>
+            </aside>
+
+            <div class="docs-main">
+              <article id="auth" class="surface docs-section">
+                <span class="eyebrow-inline">Auth</span>
+                <h2>Admin and read-only keys</h2>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Header</th>
+                        <th>Role</th>
+                        <th>Purpose</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td><code>X-Notification-Admin-Token</code></td>
+                        <td>Admin</td>
+                        <td>Create, patch, disable, and manage platform records.</td>
+                      </tr>
+                      <tr>
+                        <td><code>X-Notification-Read-Token</code></td>
+                        <td>Read-only</td>
+                        <td>Inspect records, routes, templates, and status without mutating data.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="callout">
+                  <strong>Security rule</strong>
+                  <span>Do not place real tokens or provider secrets in docs or source control. The platform stores references, not raw secret values, wherever possible.</span>
+                </div>
+              </article>
+
+              <article id="clients" class="surface docs-section">
+                <span class="eyebrow-inline">Clients</span>
+                <h2>Onboard a client in three steps</h2>
+                <div class="stack">
+                  <div>
+                    <h3>1. Create the client</h3>
+                    <p>Use <code>POST /v1/clients</code> to create a client identity and return a client API key.</p>
+                    <pre class="code-block compact">POST /v1/clients
+X-Notification-Admin-Token: &lt;admin token&gt;
+{
+  "tenant_id": "tenant-a",
+  "client_name": "billing-service",
+  "allowed_channels": ["email", "sms", "whatsapp", "push", "webhook"],
+  "enabled": true
+}</pre>
+                  </div>
+                  <div>
+                    <h3>2. Share the client API key with the service</h3>
+                    <p>The client API key is what upstream services use for <code>POST /v1/notification-requests</code>.</p>
+                  </div>
+                  <div>
+                    <h3>3. Constrain channel access</h3>
+                    <p>Allowed channels are enforced by the control plane before a request can be accepted.</p>
+                  </div>
+                </div>
+              </article>
+
+              <article id="providers" class="surface docs-section">
+                <span class="eyebrow-inline">Providers</span>
+                <h2>Register provider accounts and secret references</h2>
+                <p>A provider account stores public config and secret references separately. That lets you keep credentials in a secret manager or mounted secret file instead of embedding them in the request.</p>
+                <pre class="code-block">POST /v1/provider-accounts
+X-Notification-Admin-Token: &lt;admin token&gt;
+{
+  "tenant_id": "tenant-a",
+  "provider_key": "gupshup-whatsapp",
+  "display_name": "Primary WhatsApp account",
+  "channel": "whatsapp",
+  "enabled": true,
+  "config": {
+    "username": "2000193848",
+    "base_url": "https://media.smsgupshup.com/GatewayAPI/rest"
+  },
+  "secret_refs": {
+    "password": {
+      "ref": "secret://tenant/tenant-a/gupshup/whatsapp/password",
+      "material_type": "secret_string"
+    }
+  }
+}</pre>
+                <p>Typical follow-up actions:</p>
+                <div class="two-up">
+                  <div>
+                    <h3>Patch provider account</h3>
+                    <p><code>PATCH /v1/provider-accounts/{providerAccountID}</code> updates config, display name, enabled state, or secret references.</p>
+                  </div>
+                  <div>
+                    <h3>Disable provider account</h3>
+                    <p><code>POST /v1/provider-accounts/{providerAccountID}/disable</code> stops the account from being selected by routing.</p>
+                  </div>
+                </div>
+              </article>
+
+              <article id="policies" class="surface docs-section">
+                <span class="eyebrow-inline">Policy</span>
+                <h2>Configure routing, templates, preferences, and delivery behavior</h2>
+                <div class="two-up">
+                  <div>
+                    <h3>Routing policies</h3>
+                    <p>Map an event name to the channels and binding set that should receive the event.</p>
+                    <pre class="code-block compact">POST /v1/routing-policies
+{
+  "event_name": "login.otp",
+  "channels": ["sms", "whatsapp"],
+  "binding_set": "primary",
+  "enabled": true,
+  "priority": 10
+}</pre>
+                  </div>
+                  <div>
+                    <h3>Templates</h3>
+                    <p>Templates are stored in the control plane and selected by <code>template_key</code>, <code>channel</code>, and <code>language_code</code>.</p>
+                    <pre class="code-block compact">POST /v1/templates
+{
+  "template_key": "farm_login_otp_wa_v2",
+  "channel": "whatsapp",
+  "language_code": "en",
+  "body_template": "{{otp}} is your verification code.",
+  "enabled": true
+}</pre>
+                  </div>
+                  <div>
+                    <h3>Preference policies</h3>
+                    <p>Preference policies suppress channels that a user has opted out of before dispatch starts.</p>
+                  </div>
+                  <div>
+                    <h3>Delivery policies</h3>
+                    <p>Delivery policies set retries and backoff per channel, so provider-specific behavior stays declarative.</p>
+                  </div>
+                </div>
+              </article>
+
+              <article id="subscriptions" class="surface docs-section">
+                <span class="eyebrow-inline">Callbacks</span>
+                <h2>Register callback routes and webhook subscriptions</h2>
+                <p>Callback routes are how providers return delivery status and inbound message events to the control plane. Webhook subscriptions are how downstream systems receive normalized lifecycle events from the control plane.</p>
+                <div class="two-up">
+                  <div>
+                    <h3>Callback routes</h3>
+                    <p>Use <code>POST /v1/callback-routes</code> to map a provider key to a provider callback path and verification mode.</p>
+                  </div>
+                  <div>
+                    <h3>Webhook subscriptions</h3>
+                    <p>Use <code>POST /v1/webhook-subscriptions</code> to forward normalized lifecycle events to another system.</p>
+                  </div>
+                </div>
+                <pre class="code-block">POST /v1/callback-routes
+{
+  "provider_key": "gupshup-whatsapp",
+  "provider_account_id": "prov_123",
+  "callback_path": "/v1/providers/gupshup-whatsapp/callbacks",
+  "verification_mode": "shared_secret",
+  "verification_secret_ref": {
+    "ref": "secret://tenant/tenant-a/providers/gupshup/callback-secret",
+    "material_type": "secret_string"
+  },
+  "enabled": true
+}</pre>
+              </article>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="../assets/app.js"></script>
+  </body>
+</html>

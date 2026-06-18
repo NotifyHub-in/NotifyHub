@@ -30,6 +30,7 @@
             <a href="./architecture.html" aria-current="page">Architecture</a>
             <a href="./channels.html">Channels</a>
             <a href="./deployment.html">Deployment</a>
+            <a href="./admin.html">Admin API</a>
           </nav>
         </div>
       </header>
@@ -46,8 +47,10 @@
                 <span>Architecture</span>
               </div>
               <span class="eyebrow-inline">System design</span>
-              <h1>Built like a control plane, not a handoff script.</h1>
-              <p class="lede">Requests enter once, get normalized, and move through policy, templates, routing, dispatch, callbacks, and observability.</p>
+              <h1>One request becomes many controlled delivery decisions.</h1>
+              <p class="lede">
+                NotifyHub is built as a control plane: client authentication, routing policy, template resolution, provider selection, callback verification, delivery tracking, and outbound webhooks are all handled centrally.
+              </p>
             </div>
           </div>
         </section>
@@ -57,87 +60,136 @@
             <aside class="docs-sidebar">
               <span class="eyebrow-inline">Overview</span>
               <nav aria-label="Architecture sections">
-                <a href="#ingress">Ingress</a>
-                <a href="#policy">Policy resolution</a>
-                <a href="#execution">Execution</a>
+                <a href="#diagram">Request path</a>
+                <a href="#models">Core models</a>
+                <a href="#state">Delivery state</a>
                 <a href="#callbacks">Callbacks</a>
-                <a href="#observability">Observability</a>
+                <a href="#scale">Scale and retries</a>
               </nav>
             </aside>
 
             <div class="docs-main">
-              <article id="ingress" class="surface docs-section">
-                <span class="eyebrow-inline">Ingress</span>
-                <h2>API + Kafka</h2>
-                <p>The API validates and persists requests, then hands delivery orchestration to the worker through Kafka.</p>
+              <article id="diagram" class="surface docs-section">
+                <span class="eyebrow-inline">Request path</span>
+                <h2>What happens when a client sends a request</h2>
+                <pre class="code-block">Client service
+  -> Notification API
+  -> request validation + auth
+  -> routing policy resolution
+  -> template lookup by key + channel + language
+  -> user preference filtering
+  -> Kafka dispatch
+  -> worker claims the job
+  -> binding selection
+  -> provider connector call
+  -> delivery attempt stored
+  -> callback gateway updates status
+  -> webhook subscription fanout</pre>
                 <div class="callout">
-                  <strong>Principle</strong>
-                  <span>The upstream service stays generic. Provider-specific behavior remains inside NotifyHub.</span>
+                  <strong>Why this shape matters</strong>
+                  <span>It keeps the service boundary stable for clients while letting providers, retries, and channel behavior evolve independently.</span>
                 </div>
               </article>
 
-              <article id="policy" class="surface docs-section">
-                <span class="eyebrow-inline">Resolution</span>
-                <h2>Policy decides how the event behaves</h2>
-                <div class="two-up">
-                  <div>
-                    <h3>Templates</h3>
-                    <p>Template selection can vary by channel, language, and client policy.</p>
-                  </div>
-                  <div>
-                    <h3>Preferences</h3>
-                    <p>User preferences gate which channels are eligible before dispatch begins.</p>
-                  </div>
-                  <div>
-                    <h3>Bindings</h3>
-                    <p>Bindings connect a logical event to the right channel and provider configuration.</p>
-                  </div>
-                  <div>
-                    <h3>Retry policy</h3>
-                    <p>Retries and fallback paths stay declarative, not hardcoded in the client.</p>
-                  </div>
-                </div>
-              </article>
-
-              <article id="execution" class="surface docs-section">
-                <span class="eyebrow-inline">Execution</span>
-                <h2>Worker + connectors dispatch the message</h2>
-                <p>The worker resolves templates, preferences, and bindings before dispatching through the relevant connector.</p>
-                <pre class="code-block">client request -> api -> kafka -> worker -> connector -> provider</pre>
-              </article>
-
-              <article id="callbacks" class="surface docs-section">
-                <span class="eyebrow-inline">Return path</span>
-                <h2>Callbacks and replies come back through the same control plane</h2>
-                <p>Provider delivery updates and inbound replies are normalized into durable events, then stored and optionally forwarded to subscribed systems.</p>
-              </article>
-
-              <article id="observability" class="surface docs-section">
-                <span class="eyebrow-inline">Operations</span>
-                <h2>Metrics and logs stay beside the runtime</h2>
+              <article id="models" class="surface docs-section">
+                <span class="eyebrow-inline">Data model</span>
+                <h2>Core tables and records</h2>
                 <div class="table-wrap">
                   <table>
                     <thead>
                       <tr>
-                        <th>Component</th>
-                        <th>What to watch</th>
+                        <th>Record</th>
+                        <th>Purpose</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr>
-                        <td>API</td>
-                        <td>Request rate, auth failures, validation failures</td>
+                        <td>Notification client</td>
+                        <td>Which upstream service is allowed to send and which channels it may use</td>
                       </tr>
                       <tr>
-                        <td>Worker</td>
-                        <td>Delivery latency, retries, provider failures</td>
+                        <td>Template</td>
+                        <td>Per-channel, per-language render source stored in the control plane</td>
                       </tr>
                       <tr>
-                        <td>Connectors</td>
-                        <td>Provider response codes, transport errors</td>
+                        <td>Routing policy</td>
+                        <td>Maps event names to channels and binding sets</td>
+                      </tr>
+                      <tr>
+                        <td>Preference policy</td>
+                        <td>Suppresses channels a user has opted out of</td>
+                      </tr>
+                      <tr>
+                        <td>Provider account</td>
+                        <td>Stores provider config and secret references separately</td>
+                      </tr>
+                      <tr>
+                        <td>Callback route</td>
+                        <td>Defines how provider callbacks are verified and accepted</td>
+                      </tr>
+                      <tr>
+                        <td>Delivery attempt</td>
+                        <td>Stores each connector call, response, and final status</td>
                       </tr>
                     </tbody>
                   </table>
+                </div>
+              </article>
+
+              <article id="state" class="surface docs-section">
+                <span class="eyebrow-inline">Lifecycle</span>
+                <h2>Request and attempt states are separate on purpose</h2>
+                <div class="two-up">
+                  <div>
+                    <h3>Request state</h3>
+                    <p>Tracks the whole notification request across all channels: accepted, processing, dispatched, delivered, suppressed, failed, unsupported, or expired.</p>
+                  </div>
+                  <div>
+                    <h3>Delivery attempt state</h3>
+                    <p>Tracks the one provider call that happened for a specific channel and binding: pending, accepted, delivered, failed, suppressed, or unsupported.</p>
+                  </div>
+                </div>
+              </article>
+
+              <article id="callbacks" class="surface docs-section">
+                <span class="eyebrow-inline">Callbacks</span>
+                <h2>Inbound callbacks and outbound lifecycle webhooks</h2>
+                <div class="two-up">
+                  <div>
+                    <h3>Provider callbacks</h3>
+                    <p>Providers call the callback gateway, which verifies the route, decodes the payload, updates delivery attempts, and stores normalized channel events.</p>
+                  </div>
+                  <div>
+                    <h3>Outbound webhooks</h3>
+                    <p>Webhook subscriptions let downstream services receive normalized lifecycle events without knowing the original provider format.</p>
+                  </div>
+                  <div>
+                    <h3>Verification modes</h3>
+                    <p>The callback route can use no verification, a shared secret, or HMAC-based verification. Providers that do not need verification still work with the <code>none</code> mode.</p>
+                  </div>
+                  <div>
+                    <h3>Failure handling</h3>
+                    <p>Invalid or missing verification details are rejected early so provider traffic does not update the wrong route.</p>
+                  </div>
+                </div>
+              </article>
+
+              <article id="scale" class="surface docs-section">
+                <span class="eyebrow-inline">Scale</span>
+                <h2>Retries, fallback, and observability are first-class</h2>
+                <div class="stack">
+                  <div>
+                    <h3>Retries</h3>
+                    <p>Channel delivery policies define retry count and backoff. The worker records retries instead of hiding them inside connector code.</p>
+                  </div>
+                  <div>
+                    <h3>Fallback</h3>
+                    <p>Bindings and provider health let the worker skip unhealthy accounts and continue through the configured binding set.</p>
+                  </div>
+                  <div>
+                    <h3>Observability</h3>
+                    <p>API, worker, callback gateway, connectors, Kafka, and storage all emit metrics so operators can see acceptance, delivery, callback, and retry behavior separately.</p>
+                  </div>
                 </div>
               </article>
             </div>

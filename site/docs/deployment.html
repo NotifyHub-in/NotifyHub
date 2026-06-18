@@ -30,6 +30,7 @@
             <a href="./architecture.html">Architecture</a>
             <a href="./channels.html">Channels</a>
             <a href="./deployment.html" aria-current="page">Deployment</a>
+            <a href="./admin.html">Admin API</a>
           </nav>
         </div>
       </header>
@@ -46,8 +47,10 @@
                 <span>Deployment</span>
               </div>
               <span class="eyebrow-inline">Operations</span>
-              <h1>Ship it anywhere you can run containers.</h1>
-              <p class="lede">The repo includes local Docker Compose, Kubernetes, and AWS EKS guidance. This page points you to the production shape and the safe shutdown path.</p>
+              <h1>Run the stack locally first, then move to Kubernetes and AWS.</h1>
+              <p class="lede">
+                The platform is split into API, worker, connectors, callback gateway, storage, Kafka, and observability. That separation is useful in production, but the docs should tell operators how to bring it up and how to shut it down safely.
+              </p>
             </div>
           </div>
         </section>
@@ -58,41 +61,103 @@
               <span class="eyebrow-inline">Runbook</span>
               <nav aria-label="Deployment sections">
                 <a href="#local">Local stack</a>
+                <a href="#secrets">Secrets</a>
                 <a href="#k8s">Kubernetes</a>
                 <a href="#aws">AWS EKS</a>
-                <a href="#rollback">Rollback</a>
+                <a href="#shutdown">Shutdown</a>
               </nav>
             </aside>
 
             <div class="docs-main">
               <article id="local" class="surface docs-section">
                 <span class="eyebrow-inline">1</span>
-                <h2>Local stack</h2>
-                <p>Use Docker Compose for rapid iteration and provider-safe smoke tests.</p>
+                <h2>Bring up the local stack</h2>
                 <pre class="code-block">docker compose up -d
-docker compose logs -f api worker</pre>
+docker compose ps
+docker compose logs -f api worker callback-gateway</pre>
+                <p>Use the local stack to validate request flow, admin APIs, template resolution, and callback handling before touching a public environment.</p>
+              </article>
+
+              <article id="secrets" class="surface docs-section">
+                <span class="eyebrow-inline">2</span>
+                <h2>Mount secrets the production way</h2>
+                <div class="two-up">
+                  <div>
+                    <h3>Provider credentials</h3>
+                    <p>Store provider credentials as secret references or mounted secret files, not inside the request payload or docs.</p>
+                  </div>
+                  <div>
+                    <h3>Admin keys</h3>
+                    <p>Keep the admin token in your deployment secret store and inject it as an environment variable or secret mount.</p>
+                  </div>
+                  <div>
+                    <h3>Callback verification</h3>
+                    <p>Callback routes can use no verification, shared-secret verification, or HMAC verification depending on the provider.</p>
+                  </div>
+                  <div>
+                    <h3>Push credentials</h3>
+                    <p>FCM service accounts should be mounted as files or secret references so the connector can resolve them at runtime.</p>
+                  </div>
+                </div>
               </article>
 
               <article id="k8s" class="surface docs-section">
-                <span class="eyebrow-inline">2</span>
-                <h2>Kubernetes</h2>
-                <p>Deploy the app namespace, observability namespace, and exporters as separate concerns so the runtime stays easy to manage.</p>
+                <span class="eyebrow-inline">3</span>
+                <h2>Kubernetes deployment shape</h2>
+                <div class="stack">
+                  <div>
+                    <h3>Application namespace</h3>
+                    <p>Run API, worker, connectors, and callback gateway in the application namespace.</p>
+                  </div>
+                  <div>
+                    <h3>Metrics namespace</h3>
+                    <p>Run Prometheus, Grafana, and dashboard components separately so app rollouts do not disturb observability.</p>
+                  </div>
+                  <div>
+                    <h3>Exporters namespace</h3>
+                    <p>Run Kafka, Postgres, and node exporters where you prefer to keep scrape targets isolated from application pods.</p>
+                  </div>
+                  <div>
+                    <h3>Ingress and DNS</h3>
+                    <p>Expose only the public endpoints you actually need. Admin and callback routes should not be reachable without intent.</p>
+                  </div>
+                </div>
               </article>
 
               <article id="aws" class="surface docs-section">
-                <span class="eyebrow-inline">3</span>
-                <h2>AWS EKS</h2>
-                <p>Use the AWS runbooks for a fresh cluster, ECR images, and production-shaped smoke testing.</p>
+                <span class="eyebrow-inline">4</span>
+                <h2>AWS EKS deployment notes</h2>
+                <div class="two-up">
+                  <div>
+                    <h3>Cluster</h3>
+                    <p>Create a fresh EKS cluster in the chosen region, then deploy the same namespace split you used locally.</p>
+                  </div>
+                  <div>
+                    <h3>Images</h3>
+                    <p>Publish images to a registry, then point the manifests or Helm values at that registry.</p>
+                  </div>
+                  <div>
+                    <h3>Smoke tests</h3>
+                    <p>Run notification smoke tests after deployment so you can verify send, callback, and metrics paths together.</p>
+                  </div>
+                  <div>
+                    <h3>Rollback</h3>
+                    <p>Keep the previous image and manifest set available so you can roll back without rebuilding the environment.</p>
+                  </div>
+                </div>
               </article>
 
-              <article id="rollback" class="surface docs-section">
-                <span class="eyebrow-inline">4</span>
-                <h2>Rollback and shutdown</h2>
-                <p>Every guide should include a rollback or shutdown path so the system remains operable and easy to stop safely.</p>
-                <div class="docs-nav-inline">
-                  <a href="./getting-started.html">Onboarding</a>
-                  <a href="./architecture.html">Architecture</a>
-                  <a href="./channels.html">Channels</a>
+              <article id="shutdown" class="surface docs-section">
+                <span class="eyebrow-inline">5</span>
+                <h2>Shutdown and cleanup</h2>
+                <p>When you need to stop the system, scale the workloads down in reverse order and remove the external resources only after the data has been backed up.</p>
+                <pre class="code-block">docker compose down
+kubectl scale deploy/api --replicas=0
+kubectl scale deploy/worker --replicas=0
+kubectl scale deploy/callback-gateway --replicas=0</pre>
+                <div class="callout">
+                  <strong>Operational note</strong>
+                  <span>Do not delete databases, buckets, or secret stores until you are sure backups and migration state are safe.</span>
                 </div>
               </article>
             </div>
