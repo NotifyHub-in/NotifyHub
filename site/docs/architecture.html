@@ -72,19 +72,32 @@
               <article id="diagram" class="surface docs-section">
                 <span class="eyebrow-inline">Request path</span>
                 <h2>What happens when a client sends a request</h2>
-                <pre class="code-block">Client service
-  -> Notification API
-  -> request validation + auth
-  -> routing policy resolution
-  -> template lookup by key + channel + language
-  -> user preference filtering
-  -> Kafka dispatch
-  -> worker claims the job
-  -> binding selection
-  -> provider connector call
-  -> delivery attempt stored
-  -> callback gateway updates status
-  -> webhook subscription fanout</pre>
+                <div class="diagram-flow" aria-label="Notification request architecture flow">
+                  <div class="diagram-node">
+                    <strong>1. Client service</strong>
+                    <span>Submits a canonical notification request with a client API key.</span>
+                  </div>
+                  <div class="diagram-arrow">↓</div>
+                  <div class="diagram-node">
+                    <strong>2. Notification API</strong>
+                    <span>Authenticates the request, validates fields, and resolves routing policy, templates, and preferences.</span>
+                  </div>
+                  <div class="diagram-arrow">↓</div>
+                  <div class="diagram-node">
+                    <strong>3. Kafka + worker</strong>
+                    <span>The request is queued, claimed by the worker, and expanded into channel-specific delivery attempts.</span>
+                  </div>
+                  <div class="diagram-arrow">↓</div>
+                  <div class="diagram-node">
+                    <strong>4. Connector + provider</strong>
+                    <span>The worker calls the provider connector, which translates the request into the provider-specific wire format.</span>
+                  </div>
+                  <div class="diagram-arrow">↓</div>
+                  <div class="diagram-node">
+                    <strong>5. Callback gateway + webhooks</strong>
+                    <span>Provider callbacks update the attempt state and can fan out as normalized lifecycle webhooks to downstream systems.</span>
+                  </div>
+                </div>
                 <div class="callout">
                   <strong>Why this shape matters</strong>
                   <span>It keeps the service boundary stable for clients while letting providers, retries, and channel behavior evolve independently.</span>

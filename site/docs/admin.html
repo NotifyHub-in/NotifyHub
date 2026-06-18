@@ -136,17 +136,17 @@ X-Notification-Admin-Token: &lt;admin token&gt;
 X-Notification-Admin-Token: &lt;admin token&gt;
 {
   "tenant_id": "tenant-a",
-  "provider_key": "gupshup-whatsapp",
+  "provider_key": "&lt;provider_key&gt;",
   "display_name": "Primary WhatsApp account",
   "channel": "whatsapp",
   "enabled": true,
   "config": {
-    "username": "2000193848",
-    "base_url": "https://media.smsgupshup.com/GatewayAPI/rest"
+    "username": "&lt;provider_username&gt;",
+    "base_url": "&lt;provider_base_url&gt;"
   },
   "secret_refs": {
     "password": {
-      "ref": "secret://tenant/tenant-a/gupshup/whatsapp/password",
+      "ref": "secret://tenant/tenant-a/providers/&lt;provider_key&gt;/password",
       "material_type": "secret_string"
     }
   }
@@ -173,9 +173,9 @@ X-Notification-Admin-Token: &lt;admin token&gt;
                     <p>Map an event name to the channels and binding set that should receive the event.</p>
                     <pre class="code-block compact">POST /v1/routing-policies
 {
-  "event_name": "login.otp",
+  "event_name": "&lt;event_name&gt;",
   "channels": ["sms", "whatsapp"],
-  "binding_set": "primary",
+  "binding_set": "&lt;binding_set&gt;",
   "enabled": true,
   "priority": 10
 }</pre>
@@ -185,7 +185,7 @@ X-Notification-Admin-Token: &lt;admin token&gt;
                     <p>Templates are stored in the control plane and selected by <code>template_key</code>, <code>channel</code>, and <code>language_code</code>.</p>
                     <pre class="code-block compact">POST /v1/templates
 {
-  "template_key": "farm_login_otp_wa_v2",
+  "template_key": "&lt;template_key&gt;",
   "channel": "whatsapp",
   "language_code": "en",
   "body_template": "{{otp}} is your verification code.",
@@ -219,12 +219,12 @@ X-Notification-Admin-Token: &lt;admin token&gt;
                 </div>
                 <pre class="code-block">POST /v1/callback-routes
 {
-  "provider_key": "gupshup-whatsapp",
-  "provider_account_id": "prov_123",
-  "callback_path": "/v1/providers/gupshup-whatsapp/callbacks",
+  "provider_key": "&lt;provider_key&gt;",
+  "provider_account_id": "&lt;provider_account_id&gt;",
+  "callback_path": "/v1/providers/&lt;provider_key&gt;/callbacks",
   "verification_mode": "shared_secret",
   "verification_secret_ref": {
-    "ref": "secret://tenant/tenant-a/providers/gupshup/callback-secret",
+    "ref": "secret://tenant/tenant-a/providers/&lt;provider_key&gt;/callback-secret",
     "material_type": "secret_string"
   },
   "enabled": true
