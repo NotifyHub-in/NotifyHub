@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"regexp"
+	"strings"
 	"text/template"
 
 	"github.com/NotifyHub-in/NotifyHub/libs/contracts/notification"
@@ -15,7 +16,7 @@ const (
 	MaxRenderedOutputLength  = 65536
 )
 
-var legacyVariablePattern = regexp.MustCompile(`\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}`)
+var legacyVariablePattern = regexp.MustCompile(`\{\{\s*\.?([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}`)
 
 func Subject(tmpl notification.Template, record notification.NotificationRecord) (string, error) {
 	return executeTemplate("subject", tmpl.SubjectTemplate, record.Variables)
@@ -44,7 +45,7 @@ func validateTemplate(name, source string) error {
 		return nil
 	}
 
-	_, err := template.New(name).Option("missingkey=error").Parse(normalizeTemplate(source))
+	_, err := template.New(name).Funcs(templateFuncs()).Option("missingkey=error").Parse(normalizeTemplate(source))
 	if err != nil {
 		return fmt.Errorf("parse %s template: %w", name, err)
 	}
@@ -56,7 +57,7 @@ func executeTemplate(name, source string, variables map[string]string) (string, 
 		variables = map[string]string{}
 	}
 
-	parsed, err := template.New(name).Option("missingkey=error").Parse(normalizeTemplate(source))
+	parsed, err := template.New(name).Funcs(templateFuncs()).Option("missingkey=error").Parse(normalizeTemplate(source))
 	if err != nil {
 		return "", fmt.Errorf("parse %s template: %w", name, err)
 	}
@@ -73,5 +74,34 @@ func executeTemplate(name, source string, variables map[string]string) (string, 
 }
 
 func normalizeTemplate(source string) string {
-	return legacyVariablePattern.ReplaceAllString(source, "{{ .$1 }}")
+	return legacyVariablePattern.ReplaceAllString(source, `{{ lookup . "$1" }}`)
+}
+
+func templateFuncs() template.FuncMap {
+	return template.FuncMap{
+		"lookup": lookupVariable,
+	}
+}
+
+func lookupVariable(variables map[string]string, name string) (string, error) {
+	if variables == nil {
+		return "", fmt.Errorf("map has no entry for key %q", name)
+	}
+
+	if value, ok := variables[name]; ok {
+		return value, nil
+	}
+
+	lowerName := strings.ToLower(name)
+	if value, ok := variables[lowerName]; ok {
+		return value, nil
+	}
+
+	for key, value := range variables {
+		if strings.EqualFold(key, name) {
+			return value, nil
+		}
+	}
+
+	return "", fmt.Errorf("map has no entry for key %q", name)
 }

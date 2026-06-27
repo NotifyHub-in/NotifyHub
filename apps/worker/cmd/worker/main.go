@@ -329,9 +329,7 @@ func processDeliveryPlan(
 			"final_status": string(finalStatus),
 		}, metrics.DefaultLatencyBuckets(), time.Since(plan.Request.RequestedAt).Seconds())
 	}
-	if err := notifier.NotifyRequestUpdated(ctx, plan.Request.RequestID, map[string]interface{}{"source": "worker"}); err != nil {
-		logger.Error("notify lifecycle webhook failed", "error", err, "request_id", plan.Request.RequestID)
-	}
+	notifier.NotifyRequestUpdatedAsync(logger, plan.Request.RequestID, map[string]interface{}{"source": "worker"})
 
 	status.Store("state", "idle")
 	status.Store("last_heartbeat", time.Now().UTC().Format(time.RFC3339))
@@ -780,9 +778,7 @@ func markExpired(
 		"stage":        "worker",
 		"final_status": string(notification.RequestStatusExpired),
 	}, metrics.DefaultLatencyBuckets(), time.Since(record.RequestedAt).Seconds())
-	if err := notifier.NotifyRequestUpdated(ctx, record.RequestID, map[string]interface{}{"source": "worker"}); err != nil {
-		logger.Error("notify lifecycle webhook failed", "error", err, "request_id", record.RequestID)
-	}
+	notifier.NotifyRequestUpdatedAsync(logger, record.RequestID, map[string]interface{}{"source": "worker"})
 
 	status.Store("state", "idle")
 	status.Store("last_heartbeat", time.Now().UTC().Format(time.RFC3339))

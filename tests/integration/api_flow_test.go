@@ -25,6 +25,7 @@ type testClient struct {
 	adminToken      string
 	readToken       string
 	client          *http.Client
+	callbackPaths   map[string]string
 }
 
 type requestDetailsResponse struct {
@@ -1906,6 +1907,7 @@ func createProviderBinding(t *testing.T, client *testClient, req notification.Pr
 func createCallbackRoute(t *testing.T, client *testClient, req notification.CallbackRouteUpsertRequest) notification.CallbackRoute {
 	t.Helper()
 
+	req.CallbackPath = normalizeCallbackRoutePath(req.ProviderKey, req.ProviderAccountID, req.CallbackPath)
 	status, body := client.mustJSON(t, http.MethodPost, "/v1/callback-routes", req)
 	if status != http.StatusCreated {
 		t.Fatalf("create callback route status = %d, want %d, body=%s", status, http.StatusCreated, string(body))
@@ -1914,6 +1916,14 @@ func createCallbackRoute(t *testing.T, client *testClient, req notification.Call
 	var route notification.CallbackRoute
 	if err := json.Unmarshal(body, &route); err != nil {
 		t.Fatalf("decode callback route response: %v", err)
+	}
+	if client != nil {
+		if client.callbackPaths == nil {
+			client.callbackPaths = make(map[string]string)
+		}
+		if route.ProviderKey != "" && route.CallbackPath != "" {
+			client.callbackPaths[route.ProviderKey] = route.CallbackPath
+		}
 	}
 	return route
 }
@@ -2324,7 +2334,7 @@ func postProviderCallbackWithHeaders(t *testing.T, client *testClient, provider 
 		t.Fatalf("marshal provider callback payload: %v", err)
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, client.callbackBaseURL+"/v1/providers/"+provider+"/callbacks", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, callbackURLForProvider(client, provider), bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("build provider callback request: %v", err)
 	}
@@ -2355,7 +2365,7 @@ func postRawProviderCallback[T any](t *testing.T, client *testClient, provider s
 		t.Fatalf("marshal provider callback payload: %v", err)
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, client.callbackBaseURL+"/v1/providers/"+provider+"/callbacks", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, callbackURLForProvider(client, provider), bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("build provider callback request: %v", err)
 	}
@@ -2381,7 +2391,7 @@ func postRawCallbackWithHeaders(t *testing.T, client *testClient, callbackBaseUR
 		t.Fatalf("marshal provider callback payload: %v", err)
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, callbackBaseURL+"/v1/providers/"+provider+"/callbacks", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, callbackURLForProviderWithBase(client, callbackBaseURL, provider), bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("build provider callback request: %v", err)
 	}
@@ -2405,6 +2415,34 @@ func postRawCallbackWithHeaders(t *testing.T, client *testClient, callbackBaseUR
 func postRawProviderCallbackJSON(t *testing.T, client *testClient, provider string, payload any) (int, []byte) {
 	t.Helper()
 	return postRawProviderCallback(t, client, provider, payload)
+}
+
+func normalizeCallbackRoutePath(providerKey, providerAccountID, callbackPath string) string {
+	providerKey = strings.TrimSpace(providerKey)
+	providerAccountID = strings.TrimSpace(providerAccountID)
+	callbackPath = strings.TrimSpace(callbackPath)
+	if providerKey == "" || providerAccountID == "" || callbackPath == "" {
+		return callbackPath
+	}
+	legacyPath := "/v1/providers/" + providerKey + "/callbacks"
+	if callbackPath == legacyPath {
+		return "/v1/providers/" + providerKey + "/" + providerAccountID + "/callbacks"
+	}
+	return callbackPath
+}
+
+func callbackURLForProvider(client *testClient, provider string) string {
+	return callbackURLForProviderWithBase(client, client.callbackBaseURL, provider)
+}
+
+func callbackURLForProviderWithBase(client *testClient, callbackBaseURL, provider string) string {
+	callbackPath := "/v1/providers/" + provider + "/callbacks"
+	if client != nil && client.callbackPaths != nil {
+		if stored := client.callbackPaths[provider]; stored != "" {
+			callbackPath = stored
+		}
+	}
+	return strings.TrimRight(callbackBaseURL, "/") + callbackPath
 }
 
 func waitForTerminalRequest(t *testing.T, client *testClient, requestID string, attempts int, interval time.Duration) requestDetailsResponse {

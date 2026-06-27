@@ -104,7 +104,7 @@ sequenceDiagram
     W->>PG: store attempt, retry, dead-letter, health updates
     W->>VW: emit request lifecycle update
 
-    EP->>CB: POST /v1/providers/{provider}/callbacks
+    EP->>CB: POST /v1/providers/{provider}/{providerAccountId}/callbacks
     CB->>PG: update attempt + request status
     CB->>VW: emit callback lifecycle update
     CB-->>EP: 202 Accepted

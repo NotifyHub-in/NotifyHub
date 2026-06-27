@@ -155,7 +155,7 @@ func TestValidateCallbackRouteRejectsUnsupportedVerificationMode(t *testing.T) {
 	err := ValidateCallbackRoute(CallbackRoute{
 		ProviderKey:       "dummy-sms",
 		ProviderAccountID: "provacct_dummy_sms",
-		CallbackPath:      "/v1/providers/dummy-sms/callbacks",
+		CallbackPath:      "/v1/providers/dummy-sms/provacct_dummy_sms/callbacks",
 		VerificationMode:  CallbackVerificationMode("unsupported_mode"),
 	})
 	if err == nil {

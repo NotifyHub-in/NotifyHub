@@ -226,7 +226,7 @@ Key endpoints currently exposed by `api`:
 
 Provider callbacks are received through `callback-gateway`:
 
-- `POST /v1/providers/{provider}/callbacks`
+- `POST /v1/providers/{provider}/{providerAccountId}/callbacks`
 
 ## Notes For Contributors
 

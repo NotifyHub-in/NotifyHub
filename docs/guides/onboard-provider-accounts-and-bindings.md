@@ -276,7 +276,7 @@ Variant 1:
 {
   "config": {
     "sender_id": "NURTUR",
-    "base_url": "https://enterprise.smsgupshup.com"
+    "base_url": "https://enterprise.smsgupshup.com/GatewayAPI/rest"
   },
   "secret_refs": {
     "api_key": {
@@ -294,7 +294,7 @@ Variant 2:
 {
   "config": {
     "sender_id": "NURTUR",
-    "base_url": "https://enterprise.smsgupshup.com"
+    "base_url": "https://enterprise.smsgupshup.com/GatewayAPI/rest"
   },
   "secret_refs": {
     "username": {

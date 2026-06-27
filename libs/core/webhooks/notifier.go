@@ -26,11 +26,38 @@ type Notifier struct {
 	store  *postgres.Store
 }
 
+type errorLogger interface {
+	Error(msg string, args ...any)
+}
+
 func NewNotifier(store *postgres.Store) *Notifier {
 	return &Notifier{
 		client: &http.Client{Timeout: 5 * time.Second},
 		store:  store,
 	}
+}
+
+func (n *Notifier) NotifyRequestUpdatedAsync(logger errorLogger, requestID string, metadata map[string]interface{}) {
+	metadata = cloneInterfaceMap(metadata)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := n.NotifyRequestUpdated(ctx, requestID, metadata); err != nil && logger != nil {
+			logger.Error("notify lifecycle webhook failed", "error", err, "request_id", requestID)
+		}
+	}()
+}
+
+func (n *Notifier) NotifyChannelEventAsync(logger errorLogger, event notification.ChannelEvent, metadata map[string]any) {
+	event = cloneChannelEvent(event)
+	metadata = cloneAnyMap(metadata)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := n.NotifyChannelEvent(ctx, event, metadata); err != nil && logger != nil {
+			logger.Error("notify inbound channel webhook failed", "error", err, "provider_key", event.ProviderKey, "event_type", event.EventType)
+		}
+	}()
 }
 
 func (n *Notifier) NotifyRequestUpdated(ctx context.Context, requestID string, metadata map[string]interface{}) error {
@@ -223,4 +250,38 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func cloneInterfaceMap(input map[string]interface{}) map[string]interface{} {
+	if input == nil {
+		return nil
+	}
+	cloned := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func cloneAnyMap(input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+	cloned := make(map[string]any, len(input))
+	for key, value := range input {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func cloneChannelEvent(event notification.ChannelEvent) notification.ChannelEvent {
+	if event.Metadata == nil {
+		return event
+	}
+	cloned := make(map[string]string, len(event.Metadata))
+	for key, value := range event.Metadata {
+		cloned[key] = value
+	}
+	event.Metadata = cloned
+	return event
 }

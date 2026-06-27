@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NotifyHub Demo Studio</title>
+    <meta
+      name="description"
+      content="A polished local showcase for sending email, SMS, WhatsApp, and push through NotifyHub with live callback and status tracking."
+    />
+    <meta name="theme-color" content="#07101f" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/notify-hub-mark.png" />
+    <link rel="apple-touch-icon" href="/assets/notify-hub-mark.png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-page="home">
+    <div class="bg-orb bg-orb-a"></div>
+    <div class="bg-orb bg-orb-b"></div>
+    <div class="bg-grid"></div>
+
+    <div class="shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="NotifyHub home">
+          <span class="brand-mark">
+            <img src="/assets/notify-hub-mark.png" alt="" />
+          </span>
+          <span class="brand-copy">
+            <strong>NotifyHub</strong>
+            <span>Demo Studio</span>
+          </span>
+        </a>
+
+        <nav class="topnav" aria-label="Primary">
+          <a href="#channels">Channels</a>
+          <a href="#live-feed">Live feed</a>
+          <a href="#callbacks">Callbacks</a>
+          <a href="#health">Health</a>
+          <a href="/admin">Admin API</a>
+        </nav>
+
+        <div class="topbar-actions">
+          <span class="status-pill" data-live-pill>
+            <span class="pulse-dot"></span>
+            Connected to localhost
+          </span>
+          <label class="client-switcher" aria-label="Selected client">
+            <span>Switch</span>
+            <select data-client-select></select>
+          </label>
+          <button class="ghost-button" type="button" data-action="reset-demo-state">Reset saved state</button>
+          <button class="ghost-button" type="button" data-action="refresh-all">Refresh</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div class="hero-copy">
+            <div class="eyebrow">Notification control plane demo</div>
+            <h1>One control plane for every message, with callbacks that show up live.</h1>
+            <p>
+              Send email, SMS, WhatsApp, and push from a single polished surface. Each send is routed through the
+              control plane, then tracked with request status, delivery attempts, and callback receipts.
+            </p>
+
+            <div class="client-strip" aria-label="Active demo client">
+              <span class="client-strip-label">Active client</span>
+              <strong data-client-spotlight>Loading</strong>
+              <span>is currently driving the channel demo</span>
+            </div>
+
+            <div class="hero-actions">
+              <button class="primary-button" type="button" data-action="send-suite">Launch smoke suite</button>
+              <button class="ghost-button" type="button" data-action="refresh-all">Refresh all status</button>
+            </div>
+
+            <dl class="hero-metrics" aria-label="Quick facts">
+              <div>
+                <dt>Channels</dt>
+                <dd>4 live paths</dd>
+              </div>
+              <div>
+                <dt>Callbacks</dt>
+                <dd>Webhook inbox + request polling</dd>
+              </div>
+              <div>
+                <dt>Mode</dt>
+                <dd>Local, production-shaped</dd>
+              </div>
+            </dl>
+          </div>
+
+          <aside class="hero-visual" aria-label="Live control room summary">
+            <div class="hero-visual-shell">
+              <div class="hero-visual-head">
+                <div>
+                  <span class="panel-kicker">Live control room</span>
+                  <h3>Request flow in motion</h3>
+                </div>
+                <span class="mini-pill mini-pill-live"><span class="pulse-dot"></span>Streaming</span>
+              </div>
+
+              <div class="hero-visual-grid">
+                <article class="signal-card signal-card-email">
+                  <span>Email</span>
+                  <strong>Ready</strong>
+                  <small>Template, binding, callback</small>
+                </article>
+                <article class="signal-card signal-card-sms">
+                  <span>SMS</span>
+                  <strong>Ready</strong>
+                  <small>Language aware template</small>
+                </article>
+                <article class="signal-card signal-card-whatsapp">
+                  <span>WhatsApp</span>
+                  <strong>Ready</strong>
+                  <small>Media and reply support</small>
+                </article>
+                <article class="signal-card signal-card-push">
+                  <span>Push</span>
+                  <strong>Ready</strong>
+                  <small>FCM token delivery path</small>
+                </article>
+              </div>
+
+              <div class="hero-flow">
+                <div class="hero-flow-row">
+                  <span>Ingest</span>
+                  <strong>Canonical request</strong>
+                </div>
+                <div class="hero-flow-row">
+                  <span>Policy</span>
+                  <strong>Route + preference</strong>
+                </div>
+                <div class="hero-flow-row">
+                  <span>Template</span>
+                  <strong>Language fallback</strong>
+                </div>
+                <div class="hero-flow-row">
+                  <span>Connector</span>
+                  <strong>Provider-specific send</strong>
+                </div>
+                <div class="hero-flow-row">
+                  <span>Callbacks</span>
+                  <strong>Webhook inbox + request status</strong>
+                </div>
+              </div>
+
+              <div class="hero-visual-footer">
+                <div>
+                  <span>Requests accepted</span>
+                  <strong data-hero-stat="accepted">0</strong>
+                </div>
+                <div>
+                  <span>Callbacks received</span>
+                  <strong data-hero-stat="webhooks">0</strong>
+                </div>
+                <div>
+                  <span>Failures</span>
+                  <strong data-hero-stat="failed">0</strong>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <section class="stats-grid" id="health">
+          <article class="stat-card">
+            <span>Accepted</span>
+            <strong data-stat="accepted">0</strong>
+            <small>Requests accepted by the API</small>
+          </article>
+          <article class="stat-card">
+            <span>Dispatched</span>
+            <strong data-stat="dispatched">0</strong>
+            <small>Requests with at least one provider attempt</small>
+          </article>
+          <article class="stat-card">
+            <span>Webhook receipts</span>
+            <strong data-stat="webhooks">0</strong>
+            <small>Lifecycle callbacks captured locally</small>
+          </article>
+          <article class="stat-card">
+            <span>Failed</span>
+            <strong data-stat="failed">0</strong>
+            <small>Delivery attempts or callback deliveries that failed</small>
+          </article>
+        </section>
+
+        <section class="workspace" id="channels">
+          <div class="workspace-main">
+            <div class="section-heading">
+              <div>
+                <div class="eyebrow eyebrow-soft">Channel studio</div>
+                <h2>Compose and send from the same surface.</h2>
+              </div>
+              <p>
+                Each card uses a seeded route, binding set, and template. Edit the recipient and content fields, then
+                send. The card updates itself with live request status once the control plane responds.
+              </p>
+            </div>
+            <div class="channel-grid" id="channelGrid"></div>
+          </div>
+
+          <aside class="workspace-side">
+            <section class="panel panel-tall" id="live-feed">
+              <div class="panel-head">
+                <div>
+                  <span class="panel-kicker">Live requests</span>
+                  <h3>Notification timeline</h3>
+                </div>
+                <button class="text-button" type="button" data-action="refresh-requests">Refresh</button>
+              </div>
+              <div class="feed" id="requestFeed"></div>
+            </section>
+
+            <section class="panel" id="callbacks">
+              <div class="panel-head">
+                <div>
+                  <span class="panel-kicker">Webhook inbox</span>
+                  <h3>Callback receipts</h3>
+                </div>
+                <button class="text-button" type="button" data-action="refresh-webhooks">Refresh</button>
+              </div>
+              <div class="feed feed-compact" id="webhookFeed"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <span class="panel-kicker">Provider callbacks</span>
+                  <h3>Channel events</h3>
+                </div>
+                <button class="text-button" type="button" data-action="refresh-provider-events">Refresh</button>
+              </div>
+              <div class="feed feed-compact" id="providerEventFeed"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <span class="panel-kicker">Bootstrapped</span>
+                  <h3>Current demo profile</h3>
+                </div>
+              </div>
+              <div class="profile-grid" id="profileGrid"></div>
+            </section>
+          </aside>
+        </section>
+
+      </main>
+    </div>
+
+    <template id="channelTemplate">
+      <article class="channel-card">
+        <div class="channel-card-top">
+          <div class="channel-badge">
+            <span class="channel-icon"></span>
+            <div>
+              <strong class="channel-label"></strong>
+              <small class="channel-route"></small>
+            </div>
+          </div>
+          <span class="channel-status" data-status>Idle</span>
+        </div>
+
+        <div class="channel-meta">
+          <span class="mini-pill" data-binding-set></span>
+          <span class="mini-pill" data-template-key></span>
+          <span class="mini-pill" data-connector-url></span>
+        </div>
+
+        <div class="channel-form"></div>
+
+        <div class="channel-actions">
+          <button class="ghost-button" type="button" data-action="prefill">Reset</button>
+          <button class="primary-button" type="button" data-action="send-channel">Send</button>
+        </div>
+
+        <pre class="json-preview"></pre>
+      </article>
+    </template>
+
+    <template id="fieldTemplate">
+      <label class="field">
+        <span></span>
+        <textarea rows="1"></textarea>
+      </label>
+    </template>
+
+    <script src="/app.js?v=3" type="module"></script>
+  </body>
+</html>

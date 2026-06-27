@@ -100,7 +100,7 @@ A real cluster may source these values from:
 - CSI secret stores
 - sealed secrets
 
-If a provider uses callback verification, keep the verification secret in the same mounted secret store and reference it by file path in the callback route.
+If a provider uses callback verification, keep the verification secret in the same mounted secret store and reference it by file path in the account-specific callback route.
 
 ## Step 4: Prepare The Helm Values File
 
@@ -251,7 +251,7 @@ If the channel supports delivery receipts or verified callbacks, point the provi
 Typical callback URL shape:
 
 ```text
-https://<control-plane-host>/v1/providers/<provider-key>/callbacks
+https://<control-plane-host>/v1/providers/<provider-key>/<provider-account-id>/callbacks
 ```
 
 Examples:

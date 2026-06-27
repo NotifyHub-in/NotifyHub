@@ -23,6 +23,7 @@ import (
 type config struct {
 	apiBaseURL        string
 	callbackBaseURL   string
+	callbackAccountID string
 	adminAPIToken     string
 	totalRequests     int
 	concurrency       int
@@ -83,6 +84,7 @@ func main() {
 	cfg := config{}
 	flag.StringVar(&cfg.apiBaseURL, "api-base-url", envOrDefault("LOADTEST_API_BASE_URL", "http://localhost:8080"), "Base URL for the notification API")
 	flag.StringVar(&cfg.callbackBaseURL, "callback-base-url", envOrDefault("LOADTEST_CALLBACK_BASE_URL", "http://localhost:8082"), "Base URL for the callback gateway")
+	flag.StringVar(&cfg.callbackAccountID, "callback-provider-account-id", envOrDefault("LOADTEST_CALLBACK_PROVIDER_ACCOUNT_ID", ""), "Optional provider account id for account-specific callback routes")
 	flag.StringVar(&cfg.adminAPIToken, "admin-api-token", envOrDefault("LOADTEST_ADMIN_API_TOKEN", "integration-admin-token"), "Admin API token for configuration endpoints")
 	flag.IntVar(&cfg.totalRequests, "requests", envInt("LOADTEST_REQUESTS", 240), "Total scenario executions")
 	flag.IntVar(&cfg.concurrency, "concurrency", envInt("LOADTEST_CONCURRENCY", 24), "Number of concurrent workers")
@@ -608,7 +610,11 @@ func (r *runner) maybeCallbackFromAccepted(ctx context.Context, accepted notific
 			ProviderMessageID: attempt.ProviderMessageID,
 			Status:            "delivered",
 		}
-		_, _, _ = r.postJSON(ctx, http.MethodPost, fmt.Sprintf("%s/v1/providers/%s/callbacks", r.cfg.callbackBaseURL, attempt.Channel), payload)
+		callbackPath := fmt.Sprintf("/v1/providers/%s/callbacks", attempt.Channel)
+		if r.cfg.callbackAccountID != "" {
+			callbackPath = fmt.Sprintf("/v1/providers/%s/%s/callbacks", attempt.Channel, r.cfg.callbackAccountID)
+		}
+		_, _, _ = r.postJSON(ctx, http.MethodPost, r.cfg.callbackBaseURL+callbackPath, payload)
 		return
 	}
 }

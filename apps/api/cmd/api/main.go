@@ -324,9 +324,7 @@ func main() {
 				return
 			}
 
-			if err := notifier.NotifyRequestUpdated(r.Context(), record.RequestID, map[string]interface{}{"source": "api", "source_client": caller.ClientName, "source_client_id": caller.ClientID}); err != nil {
-				logger.Error("notify accepted lifecycle webhook failed", "error", err, "request_id", record.RequestID)
-			}
+			notifier.NotifyRequestUpdatedAsync(logger, record.RequestID, map[string]interface{}{"source": "api", "source_client": caller.ClientName, "source_client_id": caller.ClientID})
 
 			registry.IncCounter("notification_request_api_events_total", "Notification request API outcomes.", map[string]string{
 				"outcome":       "accepted",
@@ -438,7 +436,7 @@ func main() {
 			}
 
 			var callbackRoute *notification.CallbackRoute
-			if route, routeErr := store.GetCallbackRouteByProviderKey(r.Context(), account.ProviderKey); routeErr == nil {
+			if route, routeErr := store.GetCallbackRouteByProviderKeyAndAccountID(r.Context(), account.ProviderKey, account.ProviderAccountID); routeErr == nil {
 				callbackRoute = &route
 			} else if !errors.Is(routeErr, postgres.ErrNotFound) {
 				logger.Error("load callback route for provider account status failed", "error", routeErr, "provider_account_id", providerAccountID, "provider_key", account.ProviderKey)
@@ -592,6 +590,10 @@ func main() {
 				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "callback route not found"})
 				return
 			}
+			if errors.Is(err, postgres.ErrConflict) {
+				httpx.WriteJSON(w, http.StatusConflict, map[string]string{"error": "multiple callback routes exist for this provider_key"})
+				return
+			}
 			if err != nil {
 				logger.Error("get callback route failed", "error", err, "provider_key", providerKey)
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load callback route"})
@@ -646,13 +648,18 @@ func main() {
 				return
 			}
 			if err := store.UpsertCallbackRoute(r.Context(), route); err != nil {
+				if errors.Is(err, postgres.ErrConflict) {
+					recordAdminAPIEvent(registry, "callback_route", "create", "conflict")
+					httpx.WriteJSON(w, http.StatusConflict, map[string]string{"error": "callback route already exists for this provider account or callback path"})
+					return
+				}
 				logger.Error("upsert callback route failed", "error", err, "provider_key", route.ProviderKey)
 				recordAdminAPIEvent(registry, "callback_route", "create", "save_failed")
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "save callback route"})
 				return
 			}
 
-			saved, err := store.GetCallbackRouteByProviderKey(r.Context(), route.ProviderKey)
+			saved, err := store.GetCallbackRouteByProviderKeyAndAccountID(r.Context(), route.ProviderKey, route.ProviderAccountID)
 			if err != nil {
 				logger.Error("reload callback route failed", "error", err, "provider_key", route.ProviderKey)
 				recordAdminAPIEvent(registry, "callback_route", "create", "reload_failed")
@@ -1285,9 +1292,7 @@ func main() {
 				return
 			}
 
-			if err := notifier.NotifyRequestUpdated(r.Context(), replayRecord.RequestID, map[string]interface{}{"source": "api", "replay": true, "dead_letter_id": deadLetterID}); err != nil {
-				logger.Error("notify replay accepted lifecycle webhook failed", "error", err, "request_id", replayRecord.RequestID)
-			}
+			notifier.NotifyRequestUpdatedAsync(logger, replayRecord.RequestID, map[string]interface{}{"source": "api", "replay": true, "dead_letter_id": deadLetterID})
 
 			registry.IncCounter("dead_letter_replay_api_events_total", "Dead-letter replay API outcomes.", map[string]string{"outcome": "accepted"})
 			httpx.WriteJSON(w, http.StatusAccepted, notification.NotificationAccepted{

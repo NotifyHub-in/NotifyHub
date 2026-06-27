@@ -80,15 +80,15 @@ Point the provider to the callback gateway endpoint for the WhatsApp provider.
 Example:
 
 ```text
-https://<your-control-plane-domain>/v1/providers/gupshup-whatsapp/callbacks
-https://<your-control-plane-domain>/v1/providers/karix-whatsapp/callbacks
+https://<your-control-plane-domain>/v1/providers/gupshup-whatsapp/<provider_account_id>/callbacks
+https://<your-control-plane-domain>/v1/providers/karix-whatsapp/<provider_account_id>/callbacks
 ```
 
 For local testing:
 
 ```text
-http://localhost:8082/v1/providers/gupshup-whatsapp/callbacks
-http://localhost:8082/v1/providers/karix-whatsapp/callbacks
+http://localhost:8082/v1/providers/gupshup-whatsapp/<provider_account_id>/callbacks
+http://localhost:8082/v1/providers/karix-whatsapp/<provider_account_id>/callbacks
 ```
 
 ## Step 2: Create A Callback Route
@@ -103,7 +103,7 @@ curl -s -X POST http://localhost:8080/v1/callback-routes \
   -d '{
     "provider_key": "gupshup-whatsapp",
     "provider_account_id": "<provider_account_id>",
-    "callback_path": "/v1/providers/gupshup-whatsapp/callbacks",
+    "callback_path": "/v1/providers/gupshup-whatsapp/<provider_account_id>/callbacks",
     "verification_mode": "none",
     "enabled": true
   }'

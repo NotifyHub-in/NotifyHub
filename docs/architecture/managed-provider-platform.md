@@ -383,7 +383,7 @@ Example:
 {
   "provider_key": "twilio-sms",
   "provider_account_id": "provacct_sms_twilio_prod",
-  "callback_path": "/v1/providers/twilio-sms/callbacks",
+  "callback_path": "/v1/providers/twilio-sms/prod-account-1/callbacks",
   "verification_mode": "signature",
   "verification_secret_ref": "secret://tenant/upstream service/twilio/webhook-signing-secret"
 }

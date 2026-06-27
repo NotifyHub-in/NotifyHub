@@ -51,58 +51,79 @@ func main() {
 		handleProviderCallback := func(w http.ResponseWriter, r *http.Request) {
 			path := strings.TrimPrefix(r.URL.Path, "/v1/providers/")
 			parts := strings.Split(strings.Trim(path, "/"), "/")
-			if len(parts) != 2 || parts[1] != "callbacks" || parts[0] == "" {
+			if len(parts) < 2 || parts[len(parts)-1] != "callbacks" || parts[0] == "" {
+				http.NotFound(w, r)
+				return
+			}
+			providerKey := parts[0]
+			providerAccountID := ""
+			if len(parts) == 3 {
+				providerAccountID = parts[1]
+			} else if len(parts) != 2 {
 				http.NotFound(w, r)
 				return
 			}
 
 			rawBody, err := io.ReadAll(r.Body)
 			if err != nil {
-				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "read_failed"})
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": providerKey, "outcome": "read_failed"})
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "read callback payload"})
 				return
 			}
 
-			def, providerKnown := notification.ProviderDefinitionByKey(parts[0])
-			route, routeErr := store.GetCallbackRouteByProviderKey(r.Context(), parts[0])
+			def, providerKnown := notification.ProviderDefinitionByKey(providerKey)
+			var (
+				route    notification.CallbackRoute
+				routeErr error
+			)
+			if providerAccountID != "" {
+				route, routeErr = store.GetCallbackRouteByProviderKeyAndAccountID(r.Context(), providerKey, providerAccountID)
+			} else {
+				route, routeErr = store.GetCallbackRouteByProviderKey(r.Context(), providerKey)
+			}
 			if errors.Is(routeErr, postgres.ErrNotFound) {
-				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "route_missing"})
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": providerKey, "outcome": "route_missing"})
 				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "callback route not configured"})
 				return
 			}
+			if errors.Is(routeErr, postgres.ErrConflict) {
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": providerKey, "outcome": "route_ambiguous"})
+				httpx.WriteJSON(w, http.StatusConflict, map[string]string{"error": "multiple callback routes exist for provider_key; use an account-specific callback path"})
+				return
+			}
 			if routeErr != nil {
-				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "lookup_failed"})
-				logger.Error("load callback route failed", "error", routeErr, "provider", parts[0])
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": providerKey, "outcome": "lookup_failed"})
+				logger.Error("load callback route failed", "error", routeErr, "provider", providerKey, "provider_account_id", providerAccountID)
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "load callback route"})
 				return
 			}
 			if !route.Enabled {
-				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "route_disabled"})
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": providerKey, "outcome": "route_disabled"})
 				httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "callback route not configured"})
 				return
 			}
 
 			if ok, verifyErr := verifyCallbackRequest(r, rawBody, route, callbackVerificationSpecFor(def, providerKnown)); verifyErr != nil {
-				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "verification_failed"})
-				logger.Error("verify provider callback failed", "error", verifyErr, "provider", parts[0], "provider_account_id", route.ProviderAccountID)
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": providerKey, "outcome": "verification_failed"})
+				logger.Error("verify provider callback failed", "error", verifyErr, "provider", providerKey, "provider_account_id", route.ProviderAccountID)
 				httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "callback verification failed"})
 				return
 			} else if !ok {
-				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "verification_failed"})
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": providerKey, "outcome": "verification_failed"})
 				httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "callback verification failed"})
 				return
 			}
 
 			statusCallbacks, statusErr := decodeProviderCallbacks(def, providerKnown, r.Method, r.URL.Query(), rawBody)
 			if statusErr == nil && len(statusCallbacks) > 0 {
-				if err := handleProviderStatusCallbacks(r.Context(), store, notifier, registry, logger, parts[0], statusCallbacks); err != nil {
+				if err := handleProviderStatusCallbacks(r.Context(), store, notifier, registry, logger, providerKey, statusCallbacks); err != nil {
 					statusCode, message := providerCallbackErrorResponse(err)
 					httpx.WriteJSON(w, statusCode, map[string]string{"error": message})
 					return
 				}
 				httpx.WriteJSON(w, http.StatusAccepted, map[string]any{
 					"service":     info.Name,
-					"provider":    parts[0],
+					"provider":    providerKey,
 					"received_at": time.Now().UTC(),
 					"callbacks":   statusCallbacks,
 				})
@@ -120,18 +141,18 @@ func main() {
 				default:
 					message = "invalid payload"
 				}
-				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": parts[0], "outcome": "invalid_payload"})
+				registry.IncCounter("provider_callbacks_total", "Inbound provider callback outcomes.", map[string]string{"provider": providerKey, "outcome": "invalid_payload"})
 				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": message})
 				return
 			}
-			if err := handleProviderInboundEvents(r.Context(), store, notifier, registry, logger, parts[0], events); err != nil {
+			if err := handleProviderInboundEvents(r.Context(), store, notifier, registry, logger, providerKey, events); err != nil {
 				statusCode, message := providerChannelEventErrorResponse(err)
 				httpx.WriteJSON(w, statusCode, map[string]string{"error": message})
 				return
 			}
 			httpx.WriteJSON(w, http.StatusAccepted, map[string]any{
 				"service":     info.Name,
-				"provider":    parts[0],
+				"provider":    providerKey,
 				"received_at": time.Now().UTC(),
 				"events":      events,
 			})
@@ -217,13 +238,11 @@ func handleProviderStatusCallbacks(ctx context.Context, store *postgres.Store, n
 			}, metrics.DefaultLatencyBuckets(), time.Since(record.RequestedAt).Seconds())
 		}
 
-		if err := notifier.NotifyRequestUpdated(ctx, attempt.RequestID, map[string]interface{}{
+		notifier.NotifyRequestUpdatedAsync(logger, attempt.RequestID, map[string]interface{}{
 			"source":              "callback-gateway",
 			"provider":            provider,
 			"provider_message_id": payload.ProviderMessageID,
-		}); err != nil {
-			logger.Error("notify lifecycle webhook failed", "error", err, "request_id", attempt.RequestID)
-		}
+		})
 
 		registry.IncCounter("delivery_status_updates_total", "Delivery status updates normalized from provider callbacks.", map[string]string{
 			"channel":   string(attempt.Channel),
@@ -268,16 +287,14 @@ func handleProviderInboundEvents(ctx context.Context, store *postgres.Store, not
 			"status":     string(event.Status),
 			"outcome":    "stored",
 		})
-		if err := notifier.NotifyChannelEvent(ctx, event, map[string]any{
+		notifier.NotifyChannelEventAsync(logger, event, map[string]any{
 			"source":      "callback-gateway",
 			"provider":    provider,
 			"channel":     event.Channel,
 			"event_type":  event.EventType,
 			"external_id": event.ExternalMessageID,
 			"reply_to_id": event.ReplyToMessageID,
-		}); err != nil {
-			logger.Error("notify inbound channel webhook failed", "error", err, "provider", provider, "event_type", event.EventType)
-		}
+		})
 	}
 	return nil
 }

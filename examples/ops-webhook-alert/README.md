@@ -43,7 +43,7 @@ This example assumes:
 
 ```bash
 curl -s http://localhost:8080/v1/notification-requests/{request_id}
-curl -s -X POST http://localhost:8082/v1/providers/webhook/callbacks \
+curl -s -X POST http://localhost:8082/v1/providers/webhook/webhook-account-1/callbacks \
   -H 'Content-Type: application/json' \
   -d '{"provider_message_id":"...","status":"delivered"}'
 ```

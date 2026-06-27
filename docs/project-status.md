@@ -194,3 +194,35 @@ If we resume from here, the highest-value next sequence is:
 2. Deeper test, chaos, and scaling hardening
 3. Alerting, tracing, and operator runbook maturity
 4. Tighten rollout automation with changelog generation and signed release notes
+
+## Phase Tracking: Tenant-Scoped Webhooks And Country-Aware Routing
+
+This section tracks the phase that will follow the current planning pass.
+
+### Current Status
+
+- [x] Problem frame identified
+  Why: lifecycle webhook fanout is currently tenant-blind, and provider routing still needs country-aware selection for SMS and WhatsApp.
+
+- [x] Implementation plan drafted
+  Why: the proposed change set is captured in [Tenant-Scoped Webhooks And Country-Aware Routing](/docs/plans/tenant-scoped-webhooks-and-country-aware-routing.md).
+
+- [x] Key behavioral decisions captured
+  Why: the phase now has a documented stance on allowed-client webhook delivery, explicit binding-set override, derived phone-country routing, and provider-account provenance tracking.
+
+### Remaining Work
+
+- [ ] Scope lifecycle webhook delivery by allowed client list
+  Remaining: wire subscription ownership and listener allowlists into webhook dispatch so only permitted client IDs receive lifecycle events.
+
+- [ ] Add explicit `binding_set` override for channel routing
+  Remaining: keep derived phone-country routing as the default, but honor an explicit binding set when the request provides one.
+
+- [ ] Add canonical country-code routing metadata
+  Remaining: define and persist the country value format used by binding configuration and worker matching.
+
+- [ ] Persist provider-account provenance on delivery attempts
+  Remaining: record the winning provider account and binding for each attempt so operators can query historical send paths.
+
+- [ ] Add tests and docs for the new phase
+  Remaining: cover tenant-sharing webhook delivery, country-aware provider selection, and provider provenance in integration coverage and updated docs.

@@ -504,11 +504,43 @@ paths:
   /v1/providers/{provider}/callbacks:
     post:
       tags: [Provider Callbacks]
-      summary: Normalize a provider callback
+      summary: Normalize a legacy provider callback
+      description: Compatibility route for providers that cannot embed the provider account id in the callback path. Use the account-specific route when multiple accounts share a provider key.
+      deprecated: true
       servers:
         - url: http://localhost:8082
       parameters:
         - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderCallback'
+      responses:
+        '202':
+          description: Callback accepted and normalized
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/providers/{provider}/{providerAccountId}/callbacks:
+    post:
+      tags: [Provider Callbacks]
+      summary: Normalize a provider callback for a specific provider account
+      servers:
+        - url: http://localhost:8082
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: providerAccountId
           in: path
           required: true
           schema:

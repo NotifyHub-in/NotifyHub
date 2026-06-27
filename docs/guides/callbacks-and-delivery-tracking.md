@@ -12,7 +12,7 @@ sequenceDiagram
     participant DB as PostgreSQL
     participant Webhook as Lifecycle webhook notifier
 
-    Provider->>Gateway: POST /v1/providers/{provider}/callbacks
+    Provider->>Gateway: POST /v1/providers/{provider}/{providerAccountId}/callbacks
     Gateway->>Gateway: Verify callback
     Gateway->>DB: Find attempt by provider_message_id
     Gateway->>DB: Update attempt status
@@ -28,8 +28,8 @@ You need:
 1. a provider account
 2. a provider binding
 3. a send that produced a `provider_message_id`
-4. a callback route if the provider uses verified callbacks
-5. the provider dashboard configured to point at the callback URL
+4. a callback route for the specific provider account if the provider uses verified callbacks
+5. the provider dashboard configured to point at the account-specific callback URL
 
 ## Generic Correlation Contract
 
@@ -91,7 +91,7 @@ curl -s -X POST http://localhost:8080/v1/callback-routes \
   -d '{
     "provider_key": "gupshup-whatsapp",
     "provider_account_id": "<provider_account_id>",
-    "callback_path": "/v1/providers/gupshup-whatsapp/callbacks",
+    "callback_path": "/v1/providers/gupshup-whatsapp/<provider_account_id>/callbacks",
     "verification_mode": "shared_secret",
     "verification_secret_ref": {
       "ref": "file:///run/notification-secrets/gupshup_whatsapp_callback_secret.txt",
@@ -109,7 +109,7 @@ Point the provider to the callback URL exposed by the control plane.
 Example:
 
 ```text
-https://<your-control-plane-domain>/v1/providers/gupshup-whatsapp/callbacks
+https://<your-control-plane-domain>/v1/providers/gupshup-whatsapp/<provider_account_id>/callbacks
 ```
 
 If the provider uses a shared secret or signature:
@@ -117,6 +117,7 @@ If the provider uses a shared secret or signature:
 - configure the same secret on the provider side
 - store the matching secret reference in the callback route
 - mount the secret into the callback gateway using the same file path referenced by the route
+- if you create multiple accounts for the same provider family, give each account its own callback path and secret
 
 ## Channel Support Today
 
@@ -204,7 +205,7 @@ You can test the route manually before waiting for a real provider callback.
 Example normalized envelope:
 
 ```bash
-curl -s -X POST http://localhost:8082/v1/providers/gupshup-whatsapp/callbacks \
+curl -s -X POST http://localhost:8082/v1/providers/gupshup-whatsapp/<provider_account_id>/callbacks \
   -H 'Content-Type: application/json' \
   -H 'X-Callback-Secret: <shared_secret>' \
   -d '{
