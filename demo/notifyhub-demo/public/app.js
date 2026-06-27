@@ -139,7 +139,7 @@ const ADMIN_WORKFLOWS = [
       }, null, 2), placeholder: "{ ... }", help: "Only non-secret provider settings belong here. Put credentials in Secret refs JSON." },
       { key: "secret_refs", label: "Secret refs JSON", type: "textarea", rows: 8, value: JSON.stringify({
         password: {
-          ref: "secret://tenant-a/providers/smtp-email/password",
+          ref: "secret://demo-tenant/providers/smtp-email/password",
           material_type: "secret_string",
         },
       }, null, 2), placeholder: "{ ... }", help: "Paste a JSON map of secret names to file:// or secret:// refs. The connector resolves them at send time." },
@@ -307,7 +307,7 @@ const ADMIN_WORKFLOWS = [
         { value: "hmac_sha256", label: "hmac_sha256" },
       ] },
       { key: "verification_secret_ref", label: "Verification secret ref JSON", type: "textarea", rows: 5, value: JSON.stringify({
-        ref: "secret://tenant-a/providers/gupshup-whatsapp/callback-secret",
+        ref: "secret://demo-tenant/providers/gupshup-whatsapp/callback-secret",
         material_type: "secret_string",
       }, null, 2), placeholder: "{ ... }", help: "Use a mounted secret file or secret-manager reference, depending on your environment." },
       { key: "enabled", label: "Enabled", type: "select", value: "true", options: [
@@ -365,16 +365,16 @@ const PROVIDER_ACCOUNT_PRESETS = {
     config: {
       host: "smtp.gmail.com",
       port: "587",
-      from_email: "no-reply@nurture.farm",
+      from_email: "no-reply@example.com",
     },
     secret_refs: {
       password: {
-        ref: "file:///run/notification-secrets/ce_email_smtp_password.txt",
+        ref: "file:///run/notification-secrets/demo_email_smtp_password.txt",
         material_type: "secret_string",
         source: "file",
       },
       user: {
-        ref: "file:///run/notification-secrets/ce_email_smtp_user.txt",
+        ref: "file:///run/notification-secrets/demo_email_smtp_user.txt",
         material_type: "secret_string",
         source: "file",
       },
@@ -384,17 +384,17 @@ const PROVIDER_ACCOUNT_PRESETS = {
     channel: "sms",
     display_name: "Primary SMS account",
     config: {
-      sender_id: "NURTUR",
+      sender_id: "DEMO",
       base_url: "https://enterprise.smsgupshup.com/GatewayAPI/rest",
     },
     secret_refs: {
       password: {
-        ref: "file:///run/notification-secrets/gupshup_sms_password.txt",
+        ref: "file:///run/notification-secrets/demo_gupshup_sms_password.txt",
         material_type: "secret_string",
         source: "file",
       },
       username: {
-        ref: "file:///run/notification-secrets/gupshup_sms_username.txt",
+        ref: "file:///run/notification-secrets/demo_gupshup_sms_username.txt",
         material_type: "secret_string",
         source: "file",
       },
@@ -410,7 +410,7 @@ const PROVIDER_ACCOUNT_PRESETS = {
     },
     secret_refs: {
       password: {
-        ref: "file:///run/notification-secrets/ce_gupshup_whatsapp_password.txt",
+        ref: "file:///run/notification-secrets/demo_gupshup_whatsapp_password.txt",
         material_type: "secret_string",
         source: "file",
       },
@@ -420,11 +420,11 @@ const PROVIDER_ACCOUNT_PRESETS = {
     channel: "push",
     display_name: "Primary push account",
     config: {
-      project_id: "nurture-farm",
+      project_id: "demo-project",
     },
     secret_refs: {
       service_account_json: {
-        ref: "file:///run/notification-secrets/farm_fcm_content_adminsdk.json",
+        ref: "file:///run/notification-secrets/demo_fcm_service_account.json",
         material_type: "secret_json",
         source: "file",
       },
@@ -480,7 +480,7 @@ const ADMIN_WORKFLOW_PRESETS = {
     callback_path: "/v1/providers/gupshup-whatsapp/provider-account-id/callbacks",
     verification_mode: "shared_secret",
     verification_secret_ref: JSON.stringify({
-      ref: "file:///run/notification-secrets/whatsapp_callback_secret.txt",
+      ref: "file:///run/notification-secrets/demo_whatsapp_callback_secret.txt",
       material_type: "secret_string",
       source: "file",
     }, null, 2),
@@ -1531,8 +1531,8 @@ function workflowPresetValues(workflow, card) {
     const providerKey = card?.querySelector('[data-field-key="provider_key"]')?.value?.trim() || "gupshup-whatsapp";
     const channel = providerKey.includes("sms") ? "sms" : "whatsapp";
     const secretPath = channel === "sms"
-      ? "file:///run/notification-secrets/gupshup_sms_callback_secret.txt"
-      : "file:///run/notification-secrets/whatsapp_callback_secret.txt";
+      ? "file:///run/notification-secrets/demo_gupshup_sms_callback_secret.txt"
+      : "file:///run/notification-secrets/demo_whatsapp_callback_secret.txt";
     const providerAccountID = providerAccountIDForKey(providerKey, channel);
     return {
       provider_key: providerKey,
